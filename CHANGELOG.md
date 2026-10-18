@@ -15,6 +15,8 @@
   - Docs: the 198.18.0.0/15 carve-out (RFC 2544 range, allowed for fake-IP DNS setups) is documented in the README "Honest scope".
   - Docs: a personal first name is removed from the docs.
   - Repo: `tests/test-output.txt` is untracked and gitignored; the local file is kept.
+- **Fix (found in the in-app run):** an egress deny was logged with `max_severity: "none"`. Every egress deny is now logged with at least `high` (`critical` for SECRET_IN_ARGS / PRIVATE_DATA_IN_ARGS), for any reason code; an allow stays `none`. New test in `tests/watch.test.mjs`.
+- In-app test (2026-10-18, Node v20.19.2, code e6f3002): 3 scans and 1 egress deny PASS; the event log is metadata only. Grok Bot kept the 7-tool list from install time after a restart, so `report` was not callable in-app and was run with the CLI on the same log. Details: [docs/IN-APP-TEST.md](docs/IN-APP-TEST.md).
 - Version 0.3.0 in all manifests and the server.
 
 ## 0.2.3 (2026-10-17)

@@ -819,6 +819,13 @@ function eventHost(tool, a, out) {
 }
 const SEV_NAMES = ["info", "low", "medium", "high", "critical"];
 // egress_check reason code -> catalog TTP id (so reports and the dashboard can name and cite them)
+// Severity of an egress decision for the log: every deny is at least "high" (any reason code, known or future);
+// secrets or session-private data leaving is "critical". An allow is "none".
+const EGRESS_SEV = { SECRET_IN_ARGS: "critical", PRIVATE_DATA_IN_ARGS: "critical" };
+export function egressSeverity(decision, codes = []) {
+  if (decision !== "deny") return "none";
+  return SEV_NAMES[Math.max(SEV.high, ...codes.map((c) => SEV[EGRESS_SEV[c]] ?? SEV.high))];
+}
 const EGRESS_TTP = { SECRET_IN_ARGS: "VB-E05", PRIVATE_DATA_IN_ARGS: "VB-E05", URL_PATH_EXFIL: "VB-E02", URL_QUERY_EXFIL: "VB-E02", DNS_SUBDOMAIN_EXFIL: "VB-E02", OPEN_REDIRECT: "VB-E03", IMAGE_WITH_PARAMS: "VB-E01", UNTRUSTED_DESTINATION: "VB-E06", UNTRUSTED_RECIPIENT: "VB-E06", UNTRUSTED_TOOL_TARGET: "VB-E06", IDN_HOMOGLYPH_HOST: "VB-T04" };
 export function buildEvent(tool, a = {}, out = null, durationMs = 0, err = null) {
   const input = typeof (a.text ?? a.html ?? a.url) === "string" ? (a.text ?? a.html ?? a.url) : canon(a);
@@ -831,7 +838,7 @@ export function buildEvent(tool, a = {}, out = null, durationMs = 0, err = null)
   };
   if (err) ev.error = true;
   if (out && typeof out.verdict === "string") ev.verdict = out.verdict;
-  if (tool === "egress_check" && out) { ev.decision = out.decision; ev.mode = out.mode; ev.sink = /^[a-z]{2,12}$/.test(out.sink) ? out.sink : "other"; const codes = (out.reasons || []).filter((r) => !r.advisory).map((r) => r.code); ev.reasons = [...new Set(codes)]; ev.ttps = [...new Set(codes.map((c) => (c === "IMAGE_WITH_PARAMS" && ev.sink === "unfurl" ? "VB-E04" : EGRESS_TTP[c])).filter(Boolean))]; }
+  if (tool === "egress_check" && out) { ev.decision = out.decision; ev.mode = out.mode; ev.sink = /^[a-z]{2,12}$/.test(out.sink) ? out.sink : "other"; const codes = (out.reasons || []).filter((r) => !r.advisory).map((r) => r.code); ev.reasons = [...new Set(codes)]; ev.ttps = [...new Set(codes.map((c) => (c === "IMAGE_WITH_PARAMS" && ev.sink === "unfurl" ? "VB-E04" : EGRESS_TTP[c])).filter(Boolean))]; ev.max_severity = egressSeverity(out.decision, codes); }
   if (tool === "mcp_verify" && out) { ev.verdict = out.error ? "no-pins" : out.ok ? "ok" : "changed"; ev.mcp_changes = findings.filter((f) => f.ttp === "VB-M03").length; }
   if (tool === "mcp_pin" && out) ev.verdict = findings.length ? "pinned-with-findings" : "pinned";
   ev.host = eventHost(tool, a, out);

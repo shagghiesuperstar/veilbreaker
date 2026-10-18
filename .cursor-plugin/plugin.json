@@ -1,0 +1,32 @@
+{
+  "name": "veilbreaker",
+  "version": "0.2.3",
+  "description": "Deterministic, zero-dependency coverage of the latest documented (2025–2026) prompt-injection concealment and exfiltration TTPs. Built to pair with an ML classifier.",
+  "author": {
+    "name": "@pixelrainbownft"
+  },
+  "homepage": "https://x.com/pixelrainbownft",
+  "repository": "https://github.com/shagghiesuperstar/veilbreaker",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "prompt-injection",
+    "unicode",
+    "exfiltration",
+    "mcp",
+    "echoleak",
+    "egress",
+    "deterministic"
+  ],
+  "displayName": "VeilBreaker",
+  "logo": "assets/logo.svg",
+  "category": "security",
+  "tags": [
+    "security",
+    "prompt-injection",
+    "mcp",
+    "egress"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}

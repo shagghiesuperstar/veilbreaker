@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "veilbreaker": { "url": "http://127.0.0.1:8788/mcp", "headers": { "Authorization": "Bearer ${MCP_AUTH_TOKEN}" } }
+  }
+}

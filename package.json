@@ -1,0 +1,21 @@
+{
+  "name": "veilbreaker",
+  "version": "0.2.3",
+  "private": true,
+  "description": "Deterministic Grok Bot MCP plugin for documented 2025-2026 prompt-injection concealment and exfiltration TTPs. Zero dependencies.",
+  "type": "module",
+  "main": "server/index.mjs",
+  "bin": {
+    "veilbreaker": "server/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start": "node server/index.mjs",
+    "scan": "node server/index.mjs --cli scan"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/shagghiesuperstar/veilbreaker"
+}

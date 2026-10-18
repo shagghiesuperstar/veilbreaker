@@ -334,9 +334,17 @@ export function decodeFollow(text) {
 // ---------------------------------------------------------------- Barracuda 2026-10 email-to-AI rules (VB-T06 fake role labels, VB-T10..T12)
 const FAKE_ROLE_UP = /\[\s*SYSTEM(?:\s+(?:NOTE|MESSAGE|OVERRIDE|PROMPT))?\s*\]|(?:^|[\s>"'(])SYSTEM\s*:/g;
 const FAKE_MODE_TAG = /\[\s*(?:admin(?:istrator)?|maintenance|developer|debug|dev|god|root)\s+mode[^\]\n]{0,30}\]/gi;
-// Directive evidence tied to the label: an imperative aimed at the AI (override/ignore/reveal/append ...), "you are now", "from now on".
-// Status verbs ("enabled", "activated", "completed") are never a directive on their own.
-const FAKE_ROLE_DIRECTIVE = /^[\s:>\-–—"'(]*(?:override|ignore|disregard|forget|reveal|output|print|append|prepend|insert|include|tell|respond|reply|summari[sz]e|label|mark|classify|advise|recommend|forward|send|wire|transfer|update|change|delete|execute|run|you\s+(?:must|should|will|are\s+now))\b|\byou\s+are\s+now\b|\bfrom\s+now\s+on\b|\b(?:override|ignore|disregard|forget|bypass)\s+(?:all\s+|any\s+|the\s+|your\s+|previous\s+|prior\s+|earlier\s+|above\s+|safety\s+)*(?:instructions?|rules?|guidelines?|polic(?:y|ies)|prompts?|safety|restrictions?|filters?)\b|\b(?:when|while|before)\s+(?:summari[sz]ing|answering|replying|responding)\b/i;
+// ALLOWLIST of AI-directed instructions (0.3.1 review round 2). Only these, in the text the label governs, make a fake
+// role label: anything else after [SYSTEM] / SYSTEM: / [ADMIN MODE ...] (status lines, log messages) is not VB-T06.
+const FAKE_ROLE_DIRECTIVE = new RegExp([
+  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+)*(?:previous|prior|above)\s+instructions?\b/,
+  /\b(?:reveal|print|output|repeat)\s+(?:the\s+|your\s+)?system\s+prompt\b/,
+  /\byou\s+are\s+now\b|\bact\s+as\b|\bdeveloper\s+mode\b/,
+  /\bwhen\s+summari[sz]ing\b|\bwhen\s+you\s+reply\b|\bin\s+your\s+response\b/,
+  /\b(?:append|insert|include)\s+(?:the\s+)?(?:following\s+)?sentence\b/,
+  /\b(?:do\s+not|don't)\s+(?:tell|mention)\b/,
+  /\boverride\s+(?:safety|polic(?:y|ies)|instructions?)\b/,
+].map((r) => r.source).join("|"), "i");
 const NEXT_LABEL = /\[\s*[A-Za-z][A-Za-z ]{0,30}\]|(?:^|\s)[A-Z]{3,}\s*:/;
 // The text a label governs: the rest of its own line, cut at the next label on that line.
 // A label alone on its line governs the next non-empty line, unless that line starts with another label.
@@ -357,33 +365,39 @@ export function fakeRoleLabel(text) {
     re.lastIndex = 0; let m;
     while ((m = re.exec(text))) {
       const seg = labelSegment(text, m.index + m[0].length);
-      if (seg.trim() && (instructionHits(seg).length || agentDirected(seg) || FAKE_ROLE_DIRECTIVE.test(seg))) { re.lastIndex = 0; return { kind, text: (m[0] + seg).trim() }; }
+      if (seg.trim() && FAKE_ROLE_DIRECTIVE.test(seg)) { re.lastIndex = 0; return { kind, text: (m[0] + seg).trim() }; }
     }
   }
   return null;
 }
-const PAY_CHANGE = /\b(?:update|change|replace|switch|modify|redirect|correct)\b[^.\n]{0,60}?\b(?:vendor|supplier|payee|beneficiary|bank(?:ing)?|payment|remittance|wire|ach)\s+(?:details|info(?:rmation)?|account|instructions|data)\b|\b(?:wire|transfer|send|remit|pay)\b[^.\n]{0,60}?\b(?:to|into)\s+(?:the\s+|our\s+|a\s+|this\s+)?(?:new\s+)?(?:account|acct|iban)\b|\bnew\s+(?:bank|banking|payment|remittance)\s+(?:details|account|instructions)\b/i;
-const ACCT_NUM = /\b(?:account|acct|a\/c|iban|routing|aba|sort\s*code|swift|bic)\b\W{0,6}(?:no\.?|number|#)?\W{0,4}\d[\d -]{5,}\d|\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}\b/i;
-// Negated or anti-fraud wording ("do not change", "never change", "verify before changing") is not a change request.
-const PAY_NEGATED = /(?:\b(?:not|never|don't|dont|do\s+not|does\s+not|doesn't|cannot|can't|won't|will\s+not|shouldn't|should\s+not|must\s+not|mustn't|no\s+one\s+will|nobody\s+will|refuse\s+to|without\s+(?:first\s+)?verifying)\s+(?:\w+\s+){0,3}|\b(?:before|prior\s+to)\s+(?:\w+\s+){0,1}|\b(?:requests?|attempts?|emails?)\s+to\s+)$/i;
-const ACCT_OLD = /\b(?:existing|current|old|previous|on\s+file|registered|usual|known)\b[^.\n\d]{0,25}$/i;
-const PAY_CHANGE_G = new RegExp(PAY_CHANGE.source, "gi");
-const ACCT_NUM_G = new RegExp(ACCT_NUM.source, "gi");
-// A change instruction (not negated) plus an account/routing/IBAN number that belongs to the requested NEW details.
+// VB-T10 ALLOWLIST (0.3.1 review round 2): an account/routing/IBAN number counts only when it is introduced as the NEW
+// destination: "new account/routing N", "change ... to account N", "update ... to N", "send/remit/pay to N".
+// The matched span must name payment or bank details (so "update the ticket to 1234567" is not a payment change).
+const PAY_NUM = String.raw`(?:\d[\d -]{5,}\d|[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7})`;
+const PAY_ACCT = String.raw`(?:account|acct|a\/c|iban|routing|aba|swift|bic|sort\s*code)(?:\s*(?:number|no\.?|#))?`;
+const PAY_DEST = new RegExp([
+  String.raw`\bnew\s+(?:(?:bank(?:ing)?|vendor|supplier|payment|remittance|wire|ach)\s+)*${PAY_ACCT}\W{0,6}(?:is\s+)?${PAY_NUM}`,
+  String.raw`\b(?:change|update|switch|redirect|modify|move|correct|replace)\b[^.\n]{0,80}?\bto\s+(?:(?:the\s+|our\s+|a\s+|this\s+)?(?:new\s+)?${PAY_ACCT}\W{0,6})?${PAY_NUM}`,
+  String.raw`\b(?:send|remit|pay|wire|transfer)\b[^.\n]{0,60}?\b(?:to|into)\s+(?:(?:the\s+|our\s+|a\s+|this\s+)?(?:new\s+)?${PAY_ACCT}\W{0,6})?${PAY_NUM}`,
+].join("|"), "gi");
+const PAY_WORD = /\b(?:bank(?:ing)?|payments?|pay|remit(?:tance)?|wire|ach|payee|beneficiary|vendor|supplier|account|acct|a\/c|iban|routing|aba|swift|bic|sort\s*code)\b/i;
+// Anti-fraud cue anywhere in the hidden block => never critical (review at most). Accepted trade-off: an attacker who adds
+// one of these words to a hidden redirect lowers it to review; a missed critical beats a critical false alarm on a real invoice.
+const PAY_ANTIFRAUD = /\b(?:do\s+not|never|reject(?:s|ed|ing)?|fraud(?:ulent)?|verify|verification|only\s+after|on\s+file|existing|current)\b/i;
+// A destination clause that is itself negated ("we cannot send payment to account ...") is not a request.
+const PAY_NEGATED = /\b(?:not|never|don't|dont|cannot|can't|won't|shouldn't|mustn't|refuse\s+to)\s+(?:\w+\s+){0,3}$/i;
+// Returns { evidence, cue } for a hidden instruction that introduces a new payment destination, else null.
+// cue is the anti-fraud word found in the same block (caller caps the finding at review), or null (critical).
 export function paymentChange(text) {
-  PAY_CHANGE_G.lastIndex = 0; let m;
-  while ((m = PAY_CHANGE_G.exec(text))) {
-    const pre = text.slice(Math.max(0, m.index - 40), m.index);
-    if (PAY_NEGATED.test(pre)) continue;
-    const lo = Math.max(0, m.index - 120), hi = Math.min(text.length, m.index + m[0].length + 250);
-    const win = text.slice(lo, hi);
-    ACCT_NUM_G.lastIndex = 0; let n;
-    while ((n = ACCT_NUM_G.exec(win))) {
-      const before = text.slice(Math.max(0, lo + n.index - 40), lo + n.index);
-      if (!ACCT_OLD.test(before)) { PAY_CHANGE_G.lastIndex = 0; return m[0]; }
-    }
+  PAY_DEST.lastIndex = 0; let m;
+  while ((m = PAY_DEST.exec(text))) {
+    if (!PAY_WORD.test(m[0])) continue;
+    if (PAY_NEGATED.test(text.slice(Math.max(0, m.index - 40), m.index))) continue;
+    PAY_DEST.lastIndex = 0;
+    const cue = text.match(PAY_ANTIFRAUD);
+    return { evidence: m[0].slice(0, 160), cue: cue ? cue[0] : null };
   }
-  PAY_CHANGE_G.lastIndex = 0;
+  PAY_DEST.lastIndex = 0;
   return null;
 }
 const MODE_CLAIM = /\b(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic|god|root|sudo)\s+mode\b[^.\n]{0,25}?\b(?:activated|enabled|engaged|unlocked|is\s+on)\b|\byou\s+are\s+(?:now\s+)?in\s+(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic)\s+mode\b|\[\s*(?:admin(?:istrator)?|maintenance|developer|debug)\s+mode[^\]\n]{0,30}\]/i;
@@ -551,7 +565,9 @@ export function scan(input) {
     for (const [w, t] of [...concealedTexts, ["normalized", unquotedRaw !== null ? normalize(unquotedRaw) : v.normalized]]) { const r = fakeRoleLabel(t); if (r && (!fr || (fr.kind === "mode" && r.kind === "system"))) { fr = r; where = w; } }
     if (fr) add("VB-T06", fr.kind === "system" || where !== "normalized" ? "high" : "medium", `Fake role label ([SYSTEM] / [ADMIN MODE] / SYSTEM:) followed by directive text (${where === "normalized" ? "visible or raw text" : where})`, fr.text, "barracuda");
     else if (unquotedRaw !== null) { const q = fakeRoleLabel(v.normalized); if (q) add("VB-T06", "low", "Fake role label in a quoted example (pre/code/blockquote)", q.text, "barracuda"); } }
-  for (const [where, t] of concealedTexts) { const pc = paymentChange(t); if (pc) { add("VB-T10", "critical", `Hidden instruction to change payment or bank details, with account/routing numbers (${where})`, t, "barracuda"); break; } }
+  { let pcw = null;
+    for (const [where, t] of concealedTexts) { const pc = paymentChange(t); if (!pc) continue; if (!pc.cue) { pcw = null; add("VB-T10", "critical", `Hidden instruction to change payment or bank details to a new account/routing number (${where})`, t, "barracuda"); break; } pcw ??= [where, pc]; }
+    if (pcw) add("VB-T10", "medium", `Hidden payment-details change to a new account/routing number, capped at review: the same hidden text also has anti-fraud wording ("${pcw[1].cue}") (${pcw[0]})`, pcw[1].evidence, "barracuda"); }
   const hiddenOr = (fn) => { for (const [where, t] of concealedTexts) { const r = fn(t); if (r) return [where, r]; } return null; };
   for (const [fn, sevV, sevH, title] of [
     [configRevealClaim, "medium", "high", "Fake admin/maintenance/developer mode or 'authorized security test' asking for the system prompt, keys or connection strings"],
@@ -896,7 +912,7 @@ export const CATALOG = [
   { id: "VB-T07", kind: "ttp", name: "Injection phrase in hidden HTML (phrase list, extra signal)", default_severity: "high (low if the same text is visible)", tools: "reveal visible/hidden split; scan", citation: CITES.ipi },
   { id: "VB-T08", kind: "ttp", name: "KEY SIGNAL: text present ONLY in a hidden or decoded view", default_severity: "medium/review for substantive concealed text; critical/suspicious when agent-directed; descriptive alt/title/aria/meta and dev comments clean", tools: "scan compares each hidden/decoded view with the visible text; agent-directed = imperative + AI addressee / 'the user' / URL-email target, or second-person directive in concealed text", citation: CITES.ipi },
   { id: "VB-T09", kind: "ttp", name: "Decode-and-follow wrapper", default_severity: "high", tools: "scan flags a decode/transform verb followed by a follow/obey verb near an encoding word", citation: CITES.tag },
-  { id: "VB-T10", kind: "ttp", name: "Hidden payment-details change with account/routing numbers (summary BEC)", default_severity: "critical", tools: "scan checks hidden/decoded views for a change-payment or wire-to-account instruction plus an account, routing, IBAN or SWIFT number", citation: CITES.barracuda },
+  { id: "VB-T10", kind: "ttp", name: "Hidden payment-details change with account/routing numbers (summary BEC)", default_severity: "critical", tools: "scan checks hidden/decoded views for an account, routing, IBAN or SWIFT number introduced as the new payment destination (new account N, change/update ... to N, send/remit/pay to N); anti-fraud wording in the same hidden block caps it at review", citation: CITES.barracuda },
   { id: "VB-T11", kind: "ttp", name: "AI-addressed fake admin mode / config reveal / screener scoring", default_severity: "medium when visible; high when hidden", tools: "scan flags admin/maintenance/developer-mode or 'authorized security test' claims that ask for the system prompt, keys or connection strings, and notes to AI screeners asking for 10/10 or an interview", citation: CITES.barracuda },
   { id: "VB-T12", kind: "ttp", name: "Credential-exfiltration code insertion instruction", default_severity: "medium when visible; critical when hidden", tools: "scan flags instructions to AI coding assistants to always insert a network call (requests.post, fetch, curl, ...) that sends password/token variables to a URL", citation: CITES.barracuda },
   { id: "VB-E01", kind: "ttp", name: "EchoLeak zero-click markdown-image exfil (incl. reference-style)", default_severity: "deny", tools: "egress_check denies image/link URLs carrying encoded/private data or non-allowlisted image params; scan flags templates (high)", citation: CITES.echoleak },

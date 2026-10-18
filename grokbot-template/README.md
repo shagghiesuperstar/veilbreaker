@@ -1,4 +1,4 @@
-# VeilBreaker — Grok Bot template
+# VeilBreaker Guard & Watch — Grok Bot template
 
 This is the companion Grok Bot template for the VeilBreaker plugin (v0.3.1+). Since 0.3.1 there is one template: the earlier Guard and Watch templates are combined into `veilbreaker.template.json`.
 

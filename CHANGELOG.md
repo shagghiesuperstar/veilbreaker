@@ -3,7 +3,7 @@
 ## 0.3.1 (2026-10-18)
 - L1: the upgrade note (README, getting-started and watch-and-report skills, Watch template README and persona) now says to remove the old `veilbreaker` connector after adding it under a new name, so two connectors never write to one log.
 - L2: IP-literal hosts in the event log are labelled `<ipv4-blocked>` / `<ipv6-blocked>` (was `-private`) for every range the SSRF guard refuses, including TEST-NET ranges; `<ipv4-public>` / `<ipv6-public>` unchanged. Version 0.3.1 in all manifests and the server.
-- Guard and Watch templates combined into one VeilBreaker template.
+- Guard and Watch templates combined into one VeilBreaker Guard & Watch template.
   `grokbot-template/veilbreaker.template.json` replaces `veilbreaker-guard.template.json` and `veilbreaker-watch.template.json`: 8 memories, 12 verbatim skills (the 11 Guard skills plus `watch-and-report`), 4 routines (daily digest, weekly dashboard, daily MCP pin check, weekly self-test). `tests/watch-template.test.mjs` folded into `tests/template.test.mjs`; README and template README updated.
 
 ## 0.3.0 (2026-10-18)

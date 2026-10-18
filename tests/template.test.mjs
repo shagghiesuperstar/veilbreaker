@@ -1,5 +1,5 @@
 import "./helpers/isolate-log.mjs";
-// The single "VeilBreaker" Grok Bot template (Guard and Watch combined in 0.3.1): parses, matches the reference key layout,
+// The single "VeilBreaker Guard & Watch" Grok Bot template (Guard and Watch combined in 0.3.1): parses, matches the reference key layout,
 // skills are copied verbatim from the plugin, every tool and CLI command it names exists, and the self-test passes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ test("template JSON parses and uses the reference key layout", () => {
   for (const m of t.memory) assert.deepEqual(Object.keys(m), ["kind", "createdAt", "content"]);
   for (const s of t.skills) assert.deepEqual(Object.keys(s), ["name", "description", "content"]);
   for (const r of t.routines) assert.deepEqual(Object.keys(r), ["slug", "name", "description", "content"]);
-  assert.equal(t.profile.name, "VeilBreaker");
+  assert.equal(t.profile.name, "VeilBreaker Guard & Watch");
   assert.match(t.profile.description, /Honest scope/); assert.match(t.profile.description, /cannot block host tools/);
   assert.equal(t.memory.length, 8); assert.equal(t.routines.length, 4);
   assert.deepEqual(t.plugins, ["veilbreaker"]);

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "veilbreaker",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Deterministic, zero-dependency coverage of the latest documented (2025–2026) prompt-injection concealment and exfiltration TTPs. Built to pair with an ML classifier.",
   "author": {
     "name": "@pixelrainbownft"

@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -5,9 +6,9 @@ import http from "node:http"; import fs from "node:fs"; import os from "node:os"
 import { handle, safeFetch } from "../server/index.mjs";
 const root = new URL("..", import.meta.url).pathname;
 
-test("MCP tools/list exposes the 7 tools", async () => {
+test("MCP tools/list exposes the 8 tools", async () => {
   const r = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  assert.deepEqual(r.result.tools.map((t) => t.name).sort(), ["egress_check", "mcp_pin", "mcp_verify", "reveal", "safe_fetch", "scan", "ttp_catalog"]);
+  assert.deepEqual(r.result.tools.map((t) => t.name).sort(), ["egress_check", "mcp_pin", "mcp_verify", "report", "reveal", "safe_fetch", "scan", "ttp_catalog"]);
 });
 test("ttp_catalog: every entry cites a source", async () => {
   const r = await handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "ttp_catalog", arguments: {} } });

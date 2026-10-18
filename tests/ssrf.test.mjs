@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 // SSRF guard for safe_fetch: address checks on every resolved IP, manual redirects re-checked per hop, hop cap.
 import { test } from "node:test";
 import assert from "node:assert/strict";

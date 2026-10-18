@@ -1,3 +1,23 @@
+# In-app test: VeilBreaker 0.3.0 — PENDING
+
+**Status: PENDING. Not run yet. No results are recorded here until the run happens in Grok Bot.**
+
+Plan (fake data only), per the v0.3.0 work order:
+1. Install or restart the `veilbreaker` connector on v0.3.0 and confirm it lists 8 tools (adds `report`).
+2. Run 3 `scan` calls on fake inputs and 1 `egress_check` that returns `deny` on fake data.
+3. Run `report` with since = 24h.
+4. Generate the dashboard (`node server/index.mjs --cli dashboard --since 7d`) and attach the HTML file in chat.
+5. Record here the exact outputs, the date, the Grok Bot version (if exposed) and the Node version.
+
+| Step | Result |
+|---|---|
+| 3 × scan | PENDING |
+| egress_check deny | PENDING |
+| report since=24h | PENDING |
+| dashboard generated and attached | PENDING |
+
+---
+
 # In-app test: VeilBreaker 0.2.3
 
 - **Date:** 2026-10-17, about 4:15–4:25 PM CT (America/Chicago, UTC-5)

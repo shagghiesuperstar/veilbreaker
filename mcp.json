@@ -5,7 +5,8 @@
       "args": ["${CURSOR_PLUGIN_ROOT}/server/index.mjs"],
       "env": {
         "VEILBREAKER_MODE": "${VEILBREAKER_MODE}",
-        "VEILBREAKER_PIN_FILE": "${VEILBREAKER_PIN_FILE}"
+        "VEILBREAKER_PIN_FILE": "${VEILBREAKER_PIN_FILE}",
+        "VEILBREAKER_LOG": "${VEILBREAKER_LOG}"
       }
     }
   }

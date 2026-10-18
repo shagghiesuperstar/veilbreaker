@@ -2,7 +2,7 @@
 // VeilBreaker MCP server. Zero runtime dependencies (Node >= 18).
 // Deterministic detectors for 2025-2026 prompt-injection concealment and exfiltration TTPs.
 // No LLM is involved in any decision. Transports: stdio (default) or HTTP (MCP_TRANSPORT=http).
-// CLI: node server/index.mjs --cli <scan|reveal|egress|catalog> <file|->
+// CLI: node server/index.mjs --cli <scan|reveal|egress|catalog|fetch|selftest|report|dashboard|serve-dashboard> (see README)
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,7 +14,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
-export const VERSION = "0.2.3";
+export const VERSION = "0.3.0";
 const env = process.env;
 const maxInput = () => (Number(env.VEILBREAKER_MAX_INPUT) > 0 ? Number(env.VEILBREAKER_MAX_INPUT) : 1_000_000); // chars accepted by reveal/scan
 const MAX_DECODED = 64_000;        // total decoded bytes per call
@@ -500,7 +500,13 @@ export function egressCheck(sink, args = {}, context = {}) {
   let mode = String(context.mode || env.VEILBREAKER_MODE || "shadow").toLowerCase();
   if (mode === "enforce") mode = "strict"; // legacy alias from 0.1.0
   if (mode !== "strict") mode = "shadow";
-  return { decision: blocking.length ? "deny" : "allow", mode, handling: mode === "strict" ? "advisory: the calling bot is expected to stop the action on deny" : "shadow/log-only: report deny to the user; VeilBreaker cannot block host tools itself", sink, reasons };
+  return { decision: blocking.length ? "deny" : "allow", mode, handling: egressHandling(mode), sink, reasons };
+}
+export function egressHandling(mode) {
+  const rec = logPath() ? "recorded to the VeilBreaker event log (metadata only)" : "NOT recorded (event log is off: VEILBREAKER_LOG=off)";
+  return mode === "strict"
+    ? `strict: advisory; the calling bot is expected to stop the action on deny. Every check is ${rec}. VeilBreaker still cannot block host tools itself.`
+    : `shadow: a deny is ${rec} and must be reported to the user; the action is not stopped by VeilBreaker. VeilBreaker still cannot block host tools itself.`;
 }
 function dnsLabelCheck(host) {
   const labels = host.split(".");
@@ -775,6 +781,228 @@ export function selfTest() {
   return { version: VERSION, total: results.length, passed, failed: results.length - passed, results };
 }
 
+// ---------------------------------------------------------------- event log (metadata only)
+// One JSON line per MCP tool call. Never stores raw input, page text, args, URLs with path/query, emails or secrets:
+// only hashes, counts, verdicts, TTP ids and a reduced host (registrable domain; subdomain labels can carry DNS-exfil data).
+export const DEFAULT_LOG = path.join(os.homedir(), ".veilbreaker", "events.jsonl");
+export const LOG_MAX_BYTES = 10 * 1024 * 1024;
+export function logPath() {
+  const v = env.VEILBREAKER_LOG;
+  if (v === undefined || v === "") return DEFAULT_LOG;
+  if (/^(off|false|0|none|disabled?)$/i.test(v.trim())) return null;
+  return v;
+}
+export function currentMode() { let m = String(env.VEILBREAKER_MODE || "shadow").toLowerCase(); if (m === "enforce") m = "strict"; return m === "strict" ? "strict" : "shadow"; }
+// Reduce a hostname to its registrable domain (last two labels, three for short second-level labels like co.uk).
+export function reduceHost(h) {
+  if (!h) return null;
+  h = String(h).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (parseV4(h) || parseV6(h)) return h;
+  if (!/^[a-z0-9.-]+$/.test(h)) return "<non-ascii-host>";
+  const l = h.split(".").filter(Boolean);
+  if (l.length <= 2) return l.join(".");
+  const n = l[l.length - 2].length <= 3 && l[l.length - 1].length === 2 ? 3 : 2;
+  return l.slice(-n).join(".");
+}
+function eventHost(tool, a, out) {
+  try {
+    if (tool === "safe_fetch") return reduceHost((out && out.final_host) || hostOf(String(a.url || "")));
+    if (tool === "egress_check") {
+      const args = a.args && typeof a.args === "object" ? a.args : {};
+      if (String(a.sink || "").toLowerCase() === "email") return null; // recipients are never logged, not even their domain
+      if (String(a.sink || "").toLowerCase() === "dns" && args.name) return reduceHost(String(args.name));
+      const urls = [args.url, ...(String(args.markdown || "").match(/https?:\/\/[^\s)\]]+/g) || []), ...extractUrls(args.body || "")].filter(Boolean);
+      for (const u of urls) { const h = hostOf(String(u)); if (h) return reduceHost(h); }
+    }
+  } catch {}
+  return null;
+}
+const SEV_NAMES = ["info", "low", "medium", "high", "critical"];
+// egress_check reason code -> catalog TTP id (so reports and the dashboard can name and cite them)
+const EGRESS_TTP = { SECRET_IN_ARGS: "VB-E05", PRIVATE_DATA_IN_ARGS: "VB-E05", URL_PATH_EXFIL: "VB-E02", URL_QUERY_EXFIL: "VB-E02", DNS_SUBDOMAIN_EXFIL: "VB-E02", OPEN_REDIRECT: "VB-E03", IMAGE_WITH_PARAMS: "VB-E01", UNTRUSTED_DESTINATION: "VB-E06", UNTRUSTED_RECIPIENT: "VB-E06", UNTRUSTED_TOOL_TARGET: "VB-E06", IDN_HOMOGLYPH_HOST: "VB-T04" };
+export function buildEvent(tool, a = {}, out = null, durationMs = 0, err = null) {
+  const input = typeof (a.text ?? a.html ?? a.url) === "string" ? (a.text ?? a.html ?? a.url) : canon(a);
+  const findings = out && Array.isArray(out.findings) ? out.findings : [];
+  const max = findings.reduce((m, f) => Math.max(m, SEV[f.severity] ?? -1), -1);
+  const ev = {
+    ts: new Date().toISOString(), tool, verdict: null, decision: null, mode: currentMode(), max_severity: max >= 0 ? SEV_NAMES[max] : "none",
+    ttps: [...new Set(findings.map((f) => f.ttp).filter((t) => /^VB-[A-Z]\d{2}$/.test(String(t))))], sink: null, host: null,
+    input_sha256: createHash("sha256").update(input).digest("hex"), input_chars: [...input].length, duration_ms: Math.round(durationMs), version: VERSION,
+  };
+  if (err) ev.error = true;
+  if (out && typeof out.verdict === "string") ev.verdict = out.verdict;
+  if (tool === "egress_check" && out) { ev.decision = out.decision; ev.mode = out.mode; ev.sink = /^[a-z]{2,12}$/.test(out.sink) ? out.sink : "other"; const codes = (out.reasons || []).filter((r) => !r.advisory).map((r) => r.code); ev.reasons = [...new Set(codes)]; ev.ttps = [...new Set(codes.map((c) => (c === "IMAGE_WITH_PARAMS" && ev.sink === "unfurl" ? "VB-E04" : EGRESS_TTP[c])).filter(Boolean))]; }
+  if (tool === "mcp_verify" && out) { ev.verdict = out.error ? "no-pins" : out.ok ? "ok" : "changed"; ev.mcp_changes = findings.filter((f) => f.ttp === "VB-M03").length; }
+  if (tool === "mcp_pin" && out) ev.verdict = findings.length ? "pinned-with-findings" : "pinned";
+  ev.host = eventHost(tool, a, out);
+  return ev;
+}
+// Append one event. Never throws: returns null on success or a short note on failure (no event content in the note).
+export function appendEvent(ev, { file = logPath(), maxBytes = Number(env.VEILBREAKER_LOG_MAX_BYTES) > 0 ? Number(env.VEILBREAKER_LOG_MAX_BYTES) : LOG_MAX_BYTES } = {}) {
+  if (!file) return null;
+  try {
+    const line = JSON.stringify(ev) + "\n";
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    let size = 0; try { size = fs.statSync(file).size; } catch {}
+    if (size > 0 && size + Buffer.byteLength(line) > maxBytes) fs.renameSync(file, file + ".1"); // keep exactly 1 old file
+    fs.appendFileSync(file, line, { mode: 0o600 });
+    return null;
+  } catch (e) {
+    return `note: VeilBreaker event log write failed (${e.code || "error"}); the tool result is unaffected. Set VEILBREAKER_LOG to a writable path or VEILBREAKER_LOG=off.`;
+  }
+}
+export function readEvents(file = logPath()) {
+  const events = []; let skipped = 0;
+  if (!file) return { events, skipped };
+  for (const f of [file + ".1", file]) {
+    let txt; try { txt = fs.readFileSync(f, "utf8"); } catch { continue; }
+    for (const line of txt.split("\n")) { if (!line.trim()) continue; try { const e = JSON.parse(line); if (e && typeof e.ts === "string" && typeof e.tool === "string") events.push(e); else skipped++; } catch { skipped++; } }
+  }
+  events.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  return { events, skipped };
+}
+export function parseSince(since, now = Date.now()) {
+  if (since === undefined || since === null || since === "") return null;
+  const s = String(since).trim();
+  const m = /^(\d{1,5})\s*([mhdw])$/i.exec(s);
+  if (m) return new Date(now - Number(m[1]) * { m: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 }[m[2].toLowerCase()]);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d)) return d; }
+  throw new Error(`invalid since '${s.slice(0, 40)}': use an ISO date/time or a relative window like 24h or 7d`);
+}
+const GROUP_KEYS = { ttp: (e) => e.ttps || [], tool: (e) => [e.tool], host: (e) => (e.host ? [e.host] : []), day: (e) => [String(e.ts).slice(0, 10)] };
+const topN = (counts, n, key) => Object.entries(counts).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n).map(([k, c]) => ({ [key]: k, count: c }));
+export function report({ since, group_by } = {}, { file = logPath(), now = Date.now() } = {}) {
+  if (group_by !== undefined && group_by !== null && !GROUP_KEYS[group_by]) throw new Error(`invalid group_by '${String(group_by).slice(0, 20)}': use ttp, tool, host or day`);
+  const from = parseSince(since, now);
+  const { events: all, skipped } = readEvents(file);
+  const ev = from ? all.filter((e) => new Date(e.ts) >= from) : all;
+  const verdicts = { suspicious: 0, review: 0, clean: 0, unsupported: 0 };
+  const egress = { checks: 0, deny: 0, allow: 0, deny_shadow_only: 0, deny_strict: 0 };
+  const mcp = { verify_runs: 0, runs_with_changes: 0, changes: 0, changed_runs: [] };
+  const ttp = {}, host = {}, tool = {}, day = {}, modes = {};
+  let errors = 0;
+  for (const e of ev) {
+    tool[e.tool] = (tool[e.tool] || 0) + 1;
+    if (e.mode) modes[e.mode] = (modes[e.mode] || 0) + 1;
+    if (e.error) errors++;
+    if ((e.tool === "scan" || e.tool === "safe_fetch") && e.verdict in verdicts) verdicts[e.verdict]++;
+    if (e.tool === "egress_check" && e.decision) {
+      egress.checks++;
+      if (e.decision === "deny") { egress.deny++; if (e.mode === "strict") egress.deny_strict++; else egress.deny_shadow_only++; } else if (e.decision === "allow") egress.allow++;
+    }
+    if (e.tool === "mcp_verify") { mcp.verify_runs++; const c = Number(e.mcp_changes) || 0; mcp.changes += c; if (c) { mcp.runs_with_changes++; mcp.changed_runs.push({ ts: e.ts, changes: c }); } }
+    for (const t of e.ttps || []) ttp[t] = (ttp[t] || 0) + 1;
+    if (e.host) host[e.host] = (host[e.host] || 0) + 1;
+    const d = String(e.ts).slice(0, 10);
+    day[d] ||= { day: d, calls: 0, suspicious: 0, deny: 0 };
+    day[d].calls++; if (e.verdict === "suspicious") day[d].suspicious++; if (e.decision === "deny") day[d].deny++;
+  }
+  const name = (id) => (CATALOG.find((c) => c.id === id) || {}).name || null;
+  const cite = (id) => (CATALOG.find((c) => c.id === id) || {}).citation || null;
+  const out = {
+    version: VERSION, summary: `${ev.length} event${ev.length === 1 ? "" : "s"}${from ? ` since ${from.toISOString()}` : ""}`,
+    log_path: file, log_enabled: !!file, since: from ? from.toISOString() : null, mode: currentMode(), modes_seen: modes,
+    first_event: ev.length ? ev[0].ts : null, last_event: ev.length ? ev[ev.length - 1].ts : null,
+    calls: ev.length, errors, verdicts, egress,
+    top_ttps: topN(ttp, 10, "ttp").map((x) => ({ ...x, name: name(x.ttp), citation: cite(x.ttp) })),
+    top_hosts: topN(host, 10, "host"), mcp_verify: mcp, by_tool: tool,
+    by_day: Object.values(day).sort((a, b) => (a.day < b.day ? -1 : 1)),
+    skipped_lines: skipped,
+  };
+  if (!file) out.note = "event log is off (VEILBREAKER_LOG=off): 0 events recorded";
+  if (group_by) { const g = {}; for (const e of ev) for (const k of GROUP_KEYS[group_by](e)) g[k] = (g[k] || 0) + 1; out.group_by = group_by; out.groups = topN(g, 1000, group_by); }
+  return out;
+}
+
+// ---------------------------------------------------------------- dashboard (one static, self-contained HTML file)
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+// Citations are shown as plain text; any scheme prefix is dropped so the page holds no URL a viewer could load.
+const plain = (s) => esc(String(s ?? "").replace(/\b[a-z][a-z0-9+.-]*:\/\//gi, ""));
+// Values read back from the log (hosts, tool names, ids, timestamps) are reduced to a token charset before rendering,
+// so a tampered log line can neither inject markup nor smuggle a loadable reference into the page.
+const tok = (s) => esc(String(s ?? "").replace(/[^A-Za-z0-9._:+\-\[\] ]/g, "?").slice(0, 80));
+function bars(rows, { label, value, color = "#6d4bd8", width = 520 }) {
+  if (!rows.length) return `<p class="muted">none</p>`;
+  const max = Math.max(1, ...rows.map(value)), h = 22, lw = 200, bw = width - lw - 50;
+  return `<svg class="bars" viewBox="0 0 ${width} ${rows.length * h + 4}" width="${width}" height="${rows.length * h + 4}" role="img">${rows.map((r, i) => {
+    const w = Math.round((value(r) / max) * bw);
+    return `<text x="0" y="${i * h + 15}">${tok(String(label(r)).slice(0, 32))}</text><rect x="${lw}" y="${i * h + 3}" width="${w}" height="15" fill="${color}"/><text x="${lw + w + 6}" y="${i * h + 15}">${value(r)}</text>`;
+  }).join("")}</svg>`;
+}
+function dayChart(days) {
+  if (!days.length) return `<p class="muted">no events in this window</p>`;
+  const W = 640, H = 160, pad = 24, n = days.length, bw = Math.min(36, Math.max(4, Math.floor((W - pad * 2) / n / 2) - 2));
+  const max = Math.max(1, ...days.map((d) => Math.max(d.deny, d.suspicious)));
+  const y = (v) => H - pad - Math.round((v / max) * (H - pad * 2));
+  return `<svg class="days" viewBox="0 0 ${W} ${H + 16}" width="${W}" height="${H + 16}" role="img"><line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="#999"/>${days.map((d, i) => {
+    const x = pad + i * ((W - pad * 2) / n);
+    return `<rect x="${x}" y="${y(d.suspicious)}" width="${bw}" height="${H - pad - y(d.suspicious)}" fill="#d9822b"><title>${tok(d.day)} suspicious ${d.suspicious}</title></rect><rect x="${x + bw + 2}" y="${y(d.deny)}" width="${bw}" height="${H - pad - y(d.deny)}" fill="#c0392b"><title>${tok(d.day)} deny ${d.deny}</title></rect><text x="${x}" y="${H - 6}" class="tick">${tok(d.day.slice(5))}</text>`;
+  }).join("")}</svg><p class="legend"><span class="sw" style="background:#d9822b"></span>suspicious <span class="sw" style="background:#c0392b"></span>egress deny (per UTC day)</p>`;
+}
+export function renderDashboard(rep, { generatedAt = new Date().toISOString() } = {}) {
+  const card = (k, v) => `<div class="card"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="referrer" content="no-referrer">
+<title>VeilBreaker dashboard</title>
+<style>
+body{font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;color:#1d1b26;background:#faf9fd}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:24px 0 8px}.muted{color:#777}
+.cards{display:flex;flex-wrap:wrap;gap:10px}.card{background:#fff;border:1px solid #e3e0ee;border-radius:8px;padding:10px 14px;min-width:120px}
+.card .v{font-size:22px;font-weight:600}.card .k{color:#666;font-size:12px}
+table{border-collapse:collapse;background:#fff}td,th{border:1px solid #e3e0ee;padding:4px 8px;text-align:left;vertical-align:top}th{background:#f1eef9}
+svg text{font-size:12px;fill:#333}.tick{font-size:10px}.sw{display:inline-block;width:10px;height:10px;margin:0 4px 0 10px}
+.meta td:first-child{color:#666}.cite{font-size:12px;color:#555}
+</style></head><body>
+<h1>VeilBreaker dashboard</h1>
+<p class="muted">Local, static report generated from the metadata-only event log. No raw content, no scripts, no network requests.</p>
+<table class="meta"><tr><td>Generated at</td><td>${esc(generatedAt)}</td></tr><tr><td>Window</td><td>${esc(rep.since ? `since ${rep.since}` : "all events")}</td></tr><tr><td>Mode</td><td>${esc(rep.mode)}${rep.mode === "shadow" ? " (deny is recorded and reported; VeilBreaker cannot block host tools)" : " (advisory; the bot is expected to stop on deny)"}${Object.keys(rep.modes_seen).length ? ` &middot; in log: ${Object.entries(rep.modes_seen).map(([k, v]) => `${tok(k)} ${Number(v) || 0}`).join(", ")}` : ""}</td></tr><tr><td>Log path</td><td>${esc(rep.log_path ?? "off (VEILBREAKER_LOG=off)")}</td></tr><tr><td>Events</td><td>${esc(rep.summary)}</td></tr><tr><td>First / last event</td><td>${tok(rep.first_event ?? "-")} / ${tok(rep.last_event ?? "-")}</td></tr><tr><td>Version</td><td>${esc(rep.version)}</td></tr></table>
+<h2>Totals</h2>
+<div class="cards">${card("calls", rep.calls)}${card("suspicious", rep.verdicts.suspicious)}${card("review", rep.verdicts.review)}${card("clean", rep.verdicts.clean)}${card("unsupported", rep.verdicts.unsupported)}${card("egress deny", rep.egress.deny)}${card("deny (shadow only)", rep.egress.deny_shadow_only)}${card("egress allow", rep.egress.allow)}${card("MCP pin changes", rep.mcp_verify.changes)}${card("errors", rep.errors)}</div>
+<h2>Deny / suspicious over time</h2>
+${dayChart(rep.by_day)}
+<h2>Top TTPs</h2>
+${bars(rep.top_ttps, { label: (r) => r.ttp, value: (r) => r.count })}
+${rep.top_ttps.length ? `<table><tr><th>ID</th><th>Count</th><th>Technique</th><th>Citation</th></tr>${rep.top_ttps.map((t) => `<tr><td>${tok(t.ttp)}</td><td>${t.count}</td><td>${esc(t.name ?? "egress reason code")}</td><td class="cite">${plain(t.citation ?? "-")}</td></tr>`).join("")}</table>` : ""}
+<h2>Top hosts</h2>
+${bars(rep.top_hosts, { label: (r) => r.host, value: (r) => r.count, color: "#2b7bb9" })}
+<h2>MCP pin changes</h2>
+${rep.mcp_verify.changed_runs.length ? `<table><tr><th>When</th><th>Changed definitions (VB-M03)</th></tr>${rep.mcp_verify.changed_runs.map((r) => `<tr><td>${tok(r.ts)}</td><td>${Number(r.changes) || 0}</td></tr>`).join("")}</table>` : `<p class="muted">${rep.mcp_verify.verify_runs} mcp_verify run(s), no changes</p>`}
+<h2>Calls by tool</h2>
+${bars(Object.entries(rep.by_tool).map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v), { label: (r) => r.k, value: (r) => r.v, color: "#5a9e6f" })}
+<p class="muted">VeilBreaker flags concealment mechanisms, not intent. This page is local only; do not publish it to the internet.</p>
+</body></html>
+`;
+}
+export function writeDashboard({ since = "7d", out = "veilbreaker-dashboard.html", file = logPath() } = {}) {
+  const rep = report({ since }, { file });
+  fs.writeFileSync(out, renderDashboard(rep));
+  return { ok: true, out: path.resolve(out), events: rep.calls, since: rep.since, log_path: rep.log_path };
+}
+const LOOPBACK = (h) => /^(127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|localhost)$/i.test(String(h));
+// Default bind is 127.0.0.1. A non-loopback bind is accepted ONLY from an explicit --bind flag, and then with a warning.
+export function resolveBind({ flag, envBind = env.VEILBREAKER_DASHBOARD_BIND } = {}) {
+  if (flag !== undefined && flag !== null) {
+    if (!flag || flag === true) throw new Error("--bind needs an address");
+    return { bind: String(flag), warning: LOOPBACK(flag) ? null : `WARNING: serving the VeilBreaker dashboard on non-loopback address ${flag}; anyone who can reach it can read your activity summary. Never publish it to the internet.` };
+  }
+  if (envBind && !LOOPBACK(envBind)) throw new Error(`refusing to bind ${envBind}: the dashboard binds 127.0.0.1 only unless --bind is given explicitly`);
+  return { bind: envBind || "127.0.0.1", warning: null };
+}
+export function serveDashboard({ port = 8790, since = "7d", bind = "127.0.0.1", file = logPath() } = {}) {
+  const srv = http.createServer((req, res) => {
+    const hostHdr = String(req.headers.host || "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+    if (LOOPBACK(bind) && !LOOPBACK(hostHdr)) { res.writeHead(421).end(); return; } // DNS-rebinding guard
+    if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405).end(); return; }
+    if (req.url !== "/" && req.url !== "/index.html") { res.writeHead(404).end(); return; }
+    let html; try { html = renderDashboard(report({ since }, { file })); } catch (e) { res.writeHead(500, { "content-type": "text/plain" }).end("dashboard error"); return; }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'", "referrer-policy": "no-referrer" });
+    res.end(req.method === "HEAD" ? undefined : html);
+  });
+  return new Promise((resolve, reject) => { srv.once("error", reject); srv.listen(port, bind, () => resolve(srv)); });
+}
+
 // ---------------------------------------------------------------- MCP plumbing
 const tools = {
   safe_fetch: {
@@ -807,6 +1035,11 @@ const tools = {
     inputSchema: { type: "object", required: ["definitions"], properties: { definitions: { type: "array" } } },
     run: (a) => mcpVerify(a.definitions),
   },
+  report: {
+    description: "Counts from VeilBreaker's own metadata-only event log (one line per tool call; no raw content): calls; scan/safe_fetch verdicts (suspicious/review/clean/unsupported); egress deny vs allow and how many denies were shadow-only; top TTPs (with catalog names and citations); top hosts (registrable domain only); mcp_verify changes; log_path and first_event/last_event. An empty log returns explicit zeros and '0 events'. since: ISO date/time or a window like '24h' / '7d'. group_by adds a full breakdown.",
+    inputSchema: { type: "object", properties: { since: { type: "string", description: "ISO 8601 date/time, or a relative window such as 24h or 7d" }, group_by: { type: "string", enum: ["ttp", "tool", "host", "day"] } } },
+    run: (a) => report({ since: a.since, group_by: a.group_by }),
+  },
   ttp_catalog: {
     description: "List covered TTPs with citations and what each VeilBreaker tool does about them. Scope: documented 2025-2026 concealment/exfil techniques; NOT reworded/semantic attacks.",
     inputSchema: { type: "object", properties: {} },
@@ -822,14 +1055,32 @@ export async function handle(msg) {
   if (method === "tools/call") {
     const t = tools[params?.name];
     if (!t) return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool ${params?.name}` } };
-    try { const out = await t.run(params.arguments || {}); return reply({ content: [{ type: "text", text: JSON.stringify(out, null, 2) }] }); }
-    catch (e) { return reply({ isError: true, content: [{ type: "text", text: `ERROR: ${e.message}` }] }); }
+    const a = params.arguments || {}, t0 = performance.now();
+    // The report tool reads the log; it is not itself logged, so a quiet day still reads "0 events".
+    const log = (out, err) => (params.name === "report" ? null : appendEvent(buildEvent(params.name, a, out, performance.now() - t0, err)));
+    let out;
+    try { out = await t.run(a); }
+    catch (e) { const note = log(null, e); return reply({ isError: true, content: [{ type: "text", text: `ERROR: ${e.message}` }, ...(note ? [{ type: "text", text: note }] : [])] }); }
+    const note = log(out, null);
+    return reply({ content: [{ type: "text", text: JSON.stringify(out, null, 2) }, ...(note ? [{ type: "text", text: note }] : [])] });
   }
   if (id === undefined) return null;
   return { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
-const CLI_USAGE = "usage: node server/index.mjs --cli <scan|reveal|egress|catalog|fetch|selftest> <file|-|url>";
+const CLI_USAGE = "usage: node server/index.mjs --cli <scan|reveal|egress|catalog|fetch|selftest> <file|-|url> | report [--since 24h] [--group-by ttp|tool|host|day] | dashboard [--since 7d] [--out veilbreaker-dashboard.html] | serve-dashboard [--port 8790] [--since 7d] [--bind <addr>]";
+const FLAG_SPEC = { report: ["since", "group-by"], dashboard: ["since", "out"], "serve-dashboard": ["port", "since", "bind"] };
+function parseFlags(cmd, args) {
+  const allowed = FLAG_SPEC[cmd], o = {};
+  for (let i = 0; i < args.length; i++) {
+    const m = /^--([a-z-]+)(?:=(.*))?$/.exec(args[i]);
+    if (!m || !allowed.includes(m[1])) throw new CliError(`unknown argument '${String(args[i]).slice(0, 40)}' for ${cmd}. ${CLI_USAGE}`);
+    const v = m[2] ?? args[++i];
+    if (v === undefined || v.startsWith("--")) throw new CliError(`--${m[1]} needs a value`);
+    o[m[1]] = v;
+  }
+  return o;
+}
 class CliError extends Error { constructor(msg, code = 2) { super(msg); this.exitCode = code; } }
 function readInput(file) {
   if (!file) throw new CliError(`missing input argument. ${CLI_USAGE}`);
@@ -843,7 +1094,24 @@ function readInput(file) {
 async function cli(argv) {
   const [cmd, file] = argv;
   let out;
-  if (cmd === "scan" || cmd === "reveal") {
+  if (FLAG_SPEC[cmd]) {
+    const f = parseFlags(cmd, argv.slice(1));
+    try {
+      if (cmd === "report") out = report({ since: f.since, group_by: f["group-by"] });
+      else if (cmd === "dashboard") out = writeDashboard({ since: f.since ?? "7d", out: f.out ?? "veilbreaker-dashboard.html" });
+      else {
+        const port = f.port === undefined ? 8790 : Number(f.port);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) throw new CliError("--port must be 0-65535");
+        let b; try { b = resolveBind({ flag: f.bind }); } catch (e) { throw new CliError(e.message); }
+        if (b.warning) process.stderr.write(b.warning + "\n");
+        parseSince(f.since ?? "7d");
+        const srv = await serveDashboard({ port, since: f.since ?? "7d", bind: b.bind });
+        const addr = srv.address(); const h = addr.family === "IPv6" || addr.family === 6 ? `[${addr.address}]` : addr.address;
+        process.stdout.write(JSON.stringify({ serving: `http://${h}:${addr.port}/`, bind: addr.address, port: addr.port, since: f.since ?? "7d", log_path: logPath(), note: "regenerated on each request; Ctrl-C to stop" }) + "\n");
+        return;
+      }
+    } catch (e) { if (e instanceof CliError) throw e; throw new CliError(e.message); }
+  } else if (cmd === "scan" || cmd === "reveal") {
     const inp = readInput(file);
     if (inp.binary || looksBinary(inp.text)) out = { verdict: "unsupported", reason: "binary or non-UTF-8 input; VeilBreaker analyses text and HTML only", bytes: inp.bytes, findings: [] };
     else out = cmd === "scan" ? scan(inp.text) : reveal(inp.text);

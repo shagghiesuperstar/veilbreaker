@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 // safe_fetch must not silently score compressed bytes as if they were text: any Content-Encoding other than identity
 // yields an explicit non-clean "unsupported / NOT scanned" result. All traffic is loopback-only.
 import { test } from "node:test";

@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 // v0.2.0 behaviours. Each rule: attack fixture(s) + benign look-alike(s). Fixtures are varied on purpose (re-tested on an unseen set).
 import { test } from "node:test";
 import assert from "node:assert/strict";

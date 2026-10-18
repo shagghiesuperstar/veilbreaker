@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { egressCheck } from "../server/index.mjs";

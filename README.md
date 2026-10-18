@@ -11,7 +11,8 @@ VeilBreaker is a zero-dependency Node MCP plugin of deterministic tools and skil
 - VeilBreaker is **strongest when reads go through `safe_fetch`**. The host's built-in web/fetch tools and other connectors cannot be intercepted by a plugin (see *Runtime findings*), so content read any other way is only covered if the bot passes it to `scan`/`reveal` as the `step-0-untrusted-content` skill instructs.
 - `safe_fetch` has an SSRF guard. It resolves every address and refuses loopback, private (RFC1918), CGNAT, link-local/metadata, ULA (fc00::/7), 0.0.0.0/8 and IPv4-mapped forms, plus metadata/local hostnames. `198.18.0.0/15` (the RFC 2544 benchmarking range) is deliberately allowed, because fake-IP DNS setups (proxy/VPN clients that map public hostnames into that range) need it to reach public sites. It follows redirects manually, re-checks each hop (max 5), and connects to the exact IP it validated, so a DNS answer that changes after the check cannot redirect the request. It cannot see past an outbound proxy (see CHANGELOG 0.2.3).
 - `safe_fetch` does not decompress. A response with any `Content-Encoding` other than `identity` (gzip, deflate, br, or a list of codings) is not decompressed or scanned. It returns verdict `unsupported`, with a reason that says the body is encoded and NOT scanned, and 0 findings. `unsupported` means NOT scanned, not clean. Decompression is deliberately unsupported in this release because of the zip-bomb risk; it may be added later.
-- `egress_check` is advisory. It defaults to **shadow / log-only** (`VEILBREAKER_MODE=shadow`): it reports `deny` with reasons, and the bot or a human has to stop the action. `strict` mode only changes the wording of the advice; VeilBreaker cannot block host tools itself.
+- `egress_check` is advisory. It defaults to **shadow** (`VEILBREAKER_MODE=shadow`): a `deny` is recorded to the event log (metadata only) and reported to the user with reasons, and the bot or a human has to stop the action. `strict` mode only changes the wording of the advice (the bot is expected to stop on deny). In both modes VeilBreaker still **cannot block host tools itself**. With `VEILBREAKER_LOG=off` nothing is recorded, and the `handling` text says so.
+- The event log only sees calls made to VeilBreaker's own tools. Content the host reads or sends without calling VeilBreaker never appears in the log, `report` or the dashboard. The log holds no raw content, but the `input_sha256` of a short or guessable input can be confirmed by someone who guesses it.
 
 ## Measured results
 - Independent held-out benchmark (5,120 samples in total, never seen by the builder): v0.2 flagged 1,634 of 2,242 disguised injections (72.9%) as suspicious, vs 797 of 2,242 (35.6%) for v0.1.
@@ -30,7 +31,15 @@ VeilBreaker is a zero-dependency Node MCP plugin of deterministic tools and skil
 | `scan(text\|html)` | Concealment findings: tag smuggling, zero-width, bidi override, mixed-script/homoglyph, encoded payloads, chat-template/role tokens, memory-persistence and self-replication directives, and the **key signal**: instruction-like text that appears **only** in a hidden or decoded view. |
 | `egress_check(sink, args, context)` | Denies when a URL / markdown image / link / unfurl / DNS name / email recipient / tool argument carries secret-looking or session-private data (plain, URL-, base64- or hex-encoded), or when the destination came from untrusted content. Covers EchoLeak reference-style images, URL-path, query and DNS-subdomain exfil, open redirects via allowlisted domains. |
 | `mcp_pin(definitions)` / `mcp_verify(definitions)` | sha256 over canonical name+description+schema per server; flags tool-description poisoning, cross-server name collision/shadowing, and rug pulls (changed after approval). |
+| `report(since?, group_by?)` | Counts from the metadata-only event log: calls, verdicts, egress deny vs allow (and shadow-only denies), top TTPs with names and citations, top hosts, `mcp_verify` changes, `log_path`, `first_event` / `last_event`. An empty log returns explicit zeros and "0 events". |
 | `ttp_catalog()` | The covered-TTP list below, with citations. |
+
+## Activity log, report and dashboard (v0.3.0)
+- **Event log.** Every MCP tool call appends one JSON line to `VEILBREAKER_LOG` (default `~/.veilbreaker/events.jsonl`; `VEILBREAKER_LOG=off` disables it). Fields: `ts`, `tool`, `verdict`, `decision`, `mode`, `max_severity`, `ttps`, `sink`, `host`, `input_sha256`, `input_chars`, `duration_ms`, `version`; plus `reasons` (egress reason codes), `mcp_changes` (`mcp_verify`) and `error` when a call failed. `host` is the registrable domain only (subdomain labels can carry DNS-exfil data); email recipients are never logged. Raw input, page text, arguments, URLs with paths or queries, emails and secrets are never stored, and a test plants a secret and an email and checks neither reaches the log. The log rotates at 10 MB and keeps one old file (`events.jsonl.1`). A failed log write never breaks the tool call; it comes back as an extra `note` text block. `report` calls are not logged, so a quiet day reads "0 events". CLI commands are not logged.
+- **`report`** `{since?: ISO | "24h" | "7d", group_by?: "ttp" | "tool" | "host" | "day"}` reads the log (current and rotated file).
+- **Dashboard.** `node server/index.mjs --cli dashboard [--since 7d] [--out veilbreaker-dashboard.html]` writes one self-contained static HTML file: inline CSS, inline SVG bars, no scripts, no external resources, no network requests, no raw content (a Content-Security-Policy of `default-src 'none'` is embedded as well). It shows totals, deny/suspicious per UTC day, top TTPs with catalog names and citations (plain text), top hosts, MCP pin changes, mode, log path and the generated-at time.
+- **Live dashboard.** `node server/index.mjs --cli serve-dashboard [--port 8790] [--since 7d]` binds **127.0.0.1 only** and regenerates the page on each request. A non-loopback bind is refused unless `--bind <addr>` is given explicitly, and then a warning is printed. Requests whose Host header is not a loopback name are refused (DNS-rebinding guard). Never publish the dashboard to the internet.
+- `node server/index.mjs --cli report [--since 24h] [--group-by ttp]` prints the same JSON as the tool.
 
 ## Covered TTPs
 This table mirrors `ttp_catalog()` exactly (ID, kind, name and default severity; a test enforces it). Each citation was fetched and its title confirmed on 2026-10-16. `kind: ttp` rows are techniques; `operational` rows (VB-I01, VB-I02) are notes about the input and carry no citation; `design` rows explain the approach. Severities are the defaults `scan` / `mcp_verify` assign; `egress_check` returns allow/deny.
@@ -78,6 +87,9 @@ node server/index.mjs --cli reveal <file|->
 node server/index.mjs --cli egress <json-file>   # {"sink","args","context"}
 node server/index.mjs --cli catalog
 node server/index.mjs --cli selftest           # built-in fixtures, prints pass/fail counts (exit 1 on any failure)
+node server/index.mjs --cli report [--since 24h] [--group-by ttp|tool|host|day]
+node server/index.mjs --cli dashboard [--since 7d] [--out veilbreaker-dashboard.html]
+node server/index.mjs --cli serve-dashboard [--port 8790] [--since 7d] [--bind <addr>]   # 127.0.0.1 unless --bind
 ```
 The CLI works through symlinks. It always prints JSON. Exit codes: 0 = result printed (including `unsupported` and `truncated`); 2 = usage or input error (e.g. missing file) as `{"error": …}`, with no stack trace; 1 = internal error, also as JSON.
 
@@ -85,10 +97,12 @@ The CLI works through symlinks. It always prints JSON. Exit codes: 0 = result pr
 ```
 npm test                          # same as: node --test tests/*.test.mjs
 ```
-Every rule has an attack fixture that must be caught and a benign look-alike that must not be flagged (emoji ZWJ and tag-flag sequences, Hebrew/Arabic bidi text, Persian/Hindi joiners, Japanese mixed kana/kanji, single-script Cyrillic/Greek/Armenian words, data:image base64, hex hashes, descriptive alt/aria/meta text, developer comments, decoding tutorials). Egress has 12 exfil patterns that must be blocked and 12 benign flows that must be allowed.
+Every rule has an attack fixture that must be caught and a benign look-alike that must not be flagged (emoji ZWJ and tag-flag sequences, Hebrew/Arabic bidi text, Persian/Hindi joiners, Japanese mixed kana/kanji, single-script Cyrillic/Greek/Armenian words, data:image base64, hex hashes, descriptive alt/aria/meta text, developer comments, decoding tutorials). Egress has 12 exfil patterns that must be blocked and 12 benign flows that must be allowed. Tests point `VEILBREAKER_LOG` and `VEILBREAKER_PIN_FILE` at temp files (`tests/helpers/isolate-log.mjs`), so they never touch `~/.veilbreaker`.
 
 ## Grok Bot template
-`grokbot-template/veilbreaker-guard.template.json` is a "VeilBreaker Guard" bot (profile, 4 memories, 11 plugin skills copied verbatim, a daily MCP pin check, a weekly self-test). See `grokbot-template/README.md`.
+`grokbot-template/veilbreaker-guard.template.json` is a "VeilBreaker Guard" bot (profile, 4 memories, 11 plugin skills copied verbatim, a daily MCP pin check, a weekly self-test).
+
+`grokbot-template/veilbreaker-watch.template.json` (v0.3.0) is a "VeilBreaker Watch" bot: it installs and configures VeilBreaker, then reports on it (4 memories, 4 plugin skills copied verbatim including the new `watch-and-report`, a daily 08:00 digest from `report`, a weekly local dashboard file, and a daily MCP pin check). See `grokbot-template/README.md`.
 
 ## License
 MIT

@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 // Grok Bot template: parses, matches the reference key layout, and every skill/tool it names exists in the plugin.
 import { test } from "node:test";
 import assert from "node:assert/strict";

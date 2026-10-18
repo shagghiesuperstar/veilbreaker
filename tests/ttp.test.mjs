@@ -1,3 +1,4 @@
+import "./helpers/isolate-log.mjs";
 // Per-TTP: attack fixture caught AND benign look-alike NOT flagged.
 import { test } from "node:test";
 import assert from "node:assert/strict";

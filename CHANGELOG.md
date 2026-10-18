@@ -1,12 +1,21 @@
 # Changelog
 
-## 0.2.4 (unreleased)
-- **Fix:** `safe_fetch` now fails loudly on encoded responses. A response with a `Content-Encoding` other than `identity` (gzip, deflate, br, or a list) returns verdict `unsupported`, a reason that says the body is encoded and NOT scanned, and 0 findings. v0.2.3 regressed against v0.2.2 here: a gzip response came back as verdict `unsupported` with no concealment findings and no reason saying the page was encoded, so a hidden payload that v0.2.2 caught went unreported. Nothing is decompressed (zip-bomb risk); the README "Honest scope" now says so.
-- **Fix:** a never-ending encoded body is aborted early. The response is dropped as soon as the headers show a non-identity encoding, so `safe_fetch` does not wait for the body.
-- Docs: the 198.18.0.0/15 carve-out (RFC 2544 range, allowed for fake-IP DNS setups) is documented in the README "Honest scope".
-- Docs: a personal first name is removed from the docs.
-- Repo: `tests/test-output.txt` is untracked and gitignored; the local file is kept.
-- No package or manifest version change in this entry.
+## 0.3.0 (2026-10-18)
+- **New: metadata-only event log.** Every MCP tool call appends one JSON line to `VEILBREAKER_LOG` (default `~/.veilbreaker/events.jsonl`; `VEILBREAKER_LOG=off` disables it). Fields: ts, tool, verdict, decision, mode, max_severity, ttps, sink, host (registrable domain only), input_sha256, input_chars, duration_ms, version, plus egress `reasons`, `mcp_changes` and `error`. Never stores raw input, page text, arguments, URLs with paths or queries, emails or secrets. Egress reason codes are mapped to catalog TTP ids (e.g. PRIVATE_DATA_IN_ARGS → VB-E05). Rotates at 10 MB and keeps one old file. A log write failure never breaks the tool call; it is returned as an extra note. `report` calls are not logged.
+- **New MCP tool `report`** `{since?: ISO|"24h"|"7d", group_by?: "ttp"|"tool"|"host"|"day"}`: calls; suspicious/review/clean/unsupported; egress deny vs allow and shadow-only denies; top TTPs with catalog names and citations; top hosts; mcp_verify changes; log_path, first_event, last_event; per-day counts. An empty log returns explicit zeros and "0 events". 8 tools in total.
+- **New dashboard.** `--cli dashboard [--since 7d] [--out veilbreaker-dashboard.html]` writes one self-contained static HTML file (inline CSS and SVG, no scripts, no external resources, no network requests, no raw content, CSP `default-src 'none'`). `--cli serve-dashboard [--port 8790]` binds 127.0.0.1 only, regenerates on each request, refuses a non-loopback bind unless `--bind` is given explicitly (and then warns), and refuses non-loopback Host headers. Also `--cli report`.
+- **Honest wording.** README "Honest scope" and the egress `handling` text now say: shadow = a deny is recorded to the event log and reported to the user; VeilBreaker still cannot block host tools itself. If the log is off, `handling` says nothing is recorded. `step-0-untrusted-content` and `why-deterministic` skills updated to match.
+- **New template** `grokbot-template/veilbreaker-watch.template.json` ("VeilBreaker Watch"), same key layout as the guard template: 4 memories, 4 verbatim skills (getting-started, the new `watch-and-report`, step-0-untrusted-content, mcp-tool-poisoning), routines for a daily 08:00 digest, a weekly dashboard file and a daily MCP pin check. README section added.
+- `getting-started` skill: 8 tools, `VEILBREAKER_MODE` and `VEILBREAKER_LOG`, run `report`, open the dashboard. The guard template carries the updated skills verbatim.
+- `mcp.json` passes `VEILBREAKER_LOG` through.
+- Tests: new `tests/watch.test.mjs` (log write/rotate/off, write failure as a note, no planted secret or email in the log, `report` math on a fixture log, dashboard has no scripts/src/href/URLs and contains the totals, escaping of hostile log values, serve-dashboard loopback-only) and `tests/watch-template.test.mjs`. Every test file imports `tests/helpers/isolate-log.mjs`, so tests never touch `~/.veilbreaker`.
+- Folded in from the unreleased 0.2.4 entry:
+  - **Fix:** `safe_fetch` now fails loudly on encoded responses. A response with a `Content-Encoding` other than `identity` (gzip, deflate, br, or a list) returns verdict `unsupported`, a reason that says the body is encoded and NOT scanned, and 0 findings. v0.2.3 regressed against v0.2.2 here: a gzip response came back as verdict `unsupported` with no concealment findings and no reason saying the page was encoded, so a hidden payload that v0.2.2 caught went unreported. Nothing is decompressed (zip-bomb risk); the README "Honest scope" now says so.
+  - **Fix:** a never-ending encoded body is aborted early. The response is dropped as soon as the headers show a non-identity encoding, so `safe_fetch` does not wait for the body.
+  - Docs: the 198.18.0.0/15 carve-out (RFC 2544 range, allowed for fake-IP DNS setups) is documented in the README "Honest scope".
+  - Docs: a personal first name is removed from the docs.
+  - Repo: `tests/test-output.txt` is untracked and gitignored; the local file is kept.
+- Version 0.3.0 in all manifests and the server.
 
 ## 0.2.3 (2026-10-17)
 - New Grok Bot template `grokbot-template/veilbreaker-guard.template.json` and its README, using the same key layout as the hermes-fleet-ops template (visibility, profile, memory, skills, routines, plugins, gettingStarted). It has a guard persona, 4 memory rules, and 11 plugin skills copied verbatim. Routines: a daily MCP pin check (`mcp_verify`) and a weekly self-test. Plugin: `veilbreaker`.

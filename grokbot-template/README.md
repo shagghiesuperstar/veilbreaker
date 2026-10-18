@@ -42,6 +42,8 @@ Contents:
 - Plugin: `veilbreaker`
 - Getting started (the getting-started skill): install, set `VEILBREAKER_MODE`, run the first scan, run `report`, open the dashboard.
 
+Upgrading from 0.2.x: the host caches the tool list from install time. Remove and re-add the `veilbreaker` connector (a restart is not enough) so `report` appears; until then run `node server/index.mjs --cli report` on the same log.
+
 The routine format has no schedule field, so the 08:00 / weekly / daily timing is stated in each routine's description; set the schedule when you create the routine.
 
 ## Credits

@@ -24,6 +24,10 @@
 
 After RestartMcpServers a new connector process ran the v0.3.0 code: it wrote `~/.veilbreaker/events.jsonl` with `"version":"0.3.0"`. But the Grok Bot tool catalog still listed only the 7 tools from install time, so `report` was **not callable in-app**. Grok Bot keeps the tool list from install time, and a restart does not pick up new tools. Fixing it needs the connector removed and re-added, which is the owner's call. Until then, `report` was run with the CLI on the same log.
 
+### Finding 1: resolved (in-app report after connector re-add)
+
+PENDING: the in-app `report` output after the connector is removed and re-added will be recorded here.
+
 ## Finding 2: egress deny logged with `max_severity: "none"` (fixed)
 
 Log line 4 (the egress deny) carries `"max_severity":"none"`, because `egress_check` returns reasons, not severity-ranked findings. Fixed after this run as a class: every egress deny is now logged with at least `high`, and `critical` when secrets or session-private data would leave (SECRET_IN_ARGS, PRIVATE_DATA_IN_ARGS). Any reason code, including future ones, maps to at least `high`; an allow stays `none`. Test: `tests/watch.test.mjs` "every egress deny is logged with a severity of at least high; allow is none" (8 deny flows covering every reason code, plus an allow). The log lines below are verbatim from the run on e6f3002, so they still show the old value.

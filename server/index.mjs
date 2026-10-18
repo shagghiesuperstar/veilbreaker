@@ -432,7 +432,8 @@ function suspiciousSegment(seg) {
   return null;
 }
 function decodeURIComponentSafe(s) { try { return decodeURIComponent(s); } catch { return s; } }
-export function egressCheck(sink, args = {}, context = {}) {
+// surface: "mcp" (MCP tool call; logged), "cli" (never logged) or "library" (direct import; never logged). Not taken from context, so a caller cannot claim it.
+export function egressCheck(sink, args = {}, context = {}, { surface = "library" } = {}) {
   const reasons = [];
   const deny = (code, why, cite = "ifc") => reasons.push({ code, why, citation: CITES[cite] });
   sink = String(sink || "tool").toLowerCase();
@@ -500,10 +501,12 @@ export function egressCheck(sink, args = {}, context = {}) {
   let mode = String(context.mode || env.VEILBREAKER_MODE || "shadow").toLowerCase();
   if (mode === "enforce") mode = "strict"; // legacy alias from 0.1.0
   if (mode !== "strict") mode = "shadow";
-  return { decision: blocking.length ? "deny" : "allow", mode, handling: egressHandling(mode), sink, reasons };
+  return { decision: blocking.length ? "deny" : "allow", mode, handling: egressHandling(mode, surface), sink, reasons };
 }
-export function egressHandling(mode) {
-  const rec = logPath() ? "recorded to the VeilBreaker event log (metadata only)" : "NOT recorded (event log is off: VEILBREAKER_LOG=off)";
+export function egressHandling(mode, surface = "library") {
+  const rec = surface === "cli" ? "NOT recorded (CLI runs are not recorded to the event log)"
+    : surface !== "mcp" ? "NOT recorded (direct library calls are not recorded to the event log; only MCP tool calls are)"
+    : logPath() ? "recorded to the VeilBreaker event log (metadata only)" : "NOT recorded (event log is off: VEILBREAKER_LOG=off)";
   return mode === "strict"
     ? `strict: advisory; the calling bot is expected to stop the action on deny. Every check is ${rec}. VeilBreaker still cannot block host tools itself.`
     : `shadow: a deny is ${rec} and must be reported to the user; the action is not stopped by VeilBreaker. VeilBreaker still cannot block host tools itself.`;
@@ -794,10 +797,13 @@ export function logPath() {
 }
 export function currentMode() { let m = String(env.VEILBREAKER_MODE || "shadow").toLowerCase(); if (m === "enforce") m = "strict"; return m === "strict" ? "strict" : "shadow"; }
 // Reduce a hostname to its registrable domain (last two labels, three for short second-level labels like co.uk).
+// IP literals are never logged: they become <ipv4-private|public> / <ipv6-private|public> (private = refused by ipBlocked).
+export const HOST_LABELS = ["<ipv4-private>", "<ipv4-public>", "<ipv6-private>", "<ipv6-public>", "<non-ascii-host>"];
 export function reduceHost(h) {
   if (!h) return null;
   h = String(h).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  if (parseV4(h) || parseV6(h)) return h;
+  const v4 = parseV4(h), v6 = !v4 && parseV6(h);
+  if (v4 || v6) return `<ipv${v4 ? 4 : 6}-${ipBlocked(v4 || h) ? "private" : "public"}>`;
   if (!/^[a-z0-9.-]+$/.test(h)) return "<non-ascii-host>";
   const l = h.split(".").filter(Boolean);
   if (l.length <= 2) return l.join(".");
@@ -927,7 +933,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const plain = (s) => esc(String(s ?? "").replace(/\b[a-z][a-z0-9+.-]*:\/\//gi, ""));
 // Values read back from the log (hosts, tool names, ids, timestamps) are reduced to a token charset before rendering,
 // so a tampered log line can neither inject markup nor smuggle a loadable reference into the page.
-const tok = (s) => esc(String(s ?? "").replace(/[^A-Za-z0-9._:+\-\[\] ]/g, "?").slice(0, 80));
+const tok = (s) => (HOST_LABELS.includes(s) ? esc(s) : esc(String(s ?? "").replace(/[^A-Za-z0-9._:+\-\[\] ]/g, "?").slice(0, 80)));
 function bars(rows, { label, value, color = "#6d4bd8", width = 520 }) {
   if (!rows.length) return `<p class="muted">none</p>`;
   const max = Math.max(1, ...rows.map(value)), h = 22, lw = 200, bw = width - lw - 50;
@@ -984,6 +990,7 @@ ${bars(Object.entries(rep.by_tool).map(([k, v]) => ({ k, v })).sort((a, b) => b.
 }
 export function writeDashboard({ since = "7d", out = "veilbreaker-dashboard.html", file = logPath() } = {}) {
   const rep = report({ since }, { file });
+  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(out, renderDashboard(rep));
   return { ok: true, out: path.resolve(out), events: rep.calls, since: rep.since, log_path: rep.log_path };
 }
@@ -1030,7 +1037,7 @@ const tools = {
   egress_check: {
     description: "Call BEFORE any send, post, link/image render, fetch-with-params, or data-carrying tool call. Denies when a URL/markdown image/link/DNS name/email recipient/tool arg carries secret-looking or session-private data, or when the destination came from untrusted content. sink: url|image|link|unfurl|dns|email|tool. context: {untrusted:[text], private:[values], allowlist:[domains], user_provided:[urls], known_recipients:[emails], mode:'shadow'|'strict'}.",
     inputSchema: { type: "object", required: ["sink", "args"], properties: { sink: { type: "string" }, args: { type: "object" }, context: { type: "object" } } },
-    run: (a) => egressCheck(a.sink, a.args, a.context || {}),
+    run: (a) => egressCheck(a.sink, a.args, a.context || {}, { surface: "mcp" }),
   },
   mcp_pin: {
     description: "Hash name+description+schema of every tool per MCP server and store the pins (approval snapshot). Also flags tool-description poisoning and cross-server name collisions. definitions: [{server, tools:[{name, description, inputSchema}]}].",
@@ -1125,7 +1132,7 @@ async function cli(argv) {
   } else if (cmd === "egress") {
     const inp = readInput(file);
     let j; try { j = JSON.parse(inp.text); } catch { throw new CliError("egress input must be JSON: {\"sink\",\"args\",\"context\"}"); }
-    out = egressCheck(j.sink, j.args, j.context || {});
+    out = egressCheck(j.sink, j.args, j.context || {}, { surface: "cli" });
   } else if (cmd === "catalog") out = { version: VERSION, ttps: CATALOG };
   else if (cmd === "selftest") { out = selfTest(); if (out.failed) { process.stdout.write(JSON.stringify(out, null, 2) + "\n"); throw new CliError(`self-test failed: ${out.failed} of ${out.total}`, 1); } }
   else if (cmd === "fetch") { if (!file) throw new CliError(`missing URL. ${CLI_USAGE}`); out = await safeFetch(file); }

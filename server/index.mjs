@@ -201,14 +201,24 @@ const IMAGE_MAGIC = {
   "svg+xml": (b) => /^\s*(\uFEFF)?\s*(<\?xml|<svg|<!--|<!DOCTYPE\s+svg)/i.test(b.toString("utf8", 0, 200)),
 };
 const anyImageMagic = (b) => Object.entries(IMAGE_MAGIC).some(([k, f]) => k !== "svg+xml" && f(b));
+const B64_CHAR = new Uint8Array(128); for (const c of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= \t\n\r\f\v") B64_CHAR[c.charCodeAt(0)] = 1;
+const IMG_B64_CAP = 262144; // per-image bound, enforced before any capture
 export function inspectDataImages(raw) {
   const out = [];
-  const re = /data:image\/([\w.+-]+);base64,([A-Za-z0-9+/=\s]{8,})/gi;
+  const re = /data:image\/([\w.+-]{1,40});base64,/gi; // header only; the payload is scanned by hand so a huge payload is never captured by a regex
   let m;
   while ((m = re.exec(raw)) && out.length < 16) {
+    const start = m.index + m[0].length;
+    let end = start, kept = 0, payload = "";
+    const parts = [];
+    while (end < raw.length) { const c = raw.charCodeAt(end); if (c >= 128 || !B64_CHAR[c]) break; end++; }
+    for (let i = start; i < end && kept < IMG_B64_CAP; i++) { const c = raw.charCodeAt(i); if (c > 32) { parts.push(raw[i]); kept++; } if (parts.length >= 8192) { payload += parts.join(""); parts.length = 0; } }
+    payload += parts.join("");
+    re.lastIndex = Math.max(re.lastIndex, end);
+    if (payload.length < 8) continue;
     const declared = `image/${m[1].toLowerCase()}`;
     const sub = m[1].toLowerCase().replace(/^jpg$|^pjpeg$/, "jpeg").replace(/^x-icon$|^vnd\.microsoft\.icon$/, "ico");
-    let b; try { b = Buffer.from(m[2].replace(/\s+/g, "").slice(0, 262144), "base64"); } catch { continue; }
+    let b; try { b = Buffer.from(payload, "base64"); } catch { continue; }
     if (!b.length) continue;
     const check = IMAGE_MAGIC[sub];
     const magicOk = check ? check(b) : anyImageMagic(b);
@@ -324,21 +334,58 @@ export function decodeFollow(text) {
 // ---------------------------------------------------------------- Barracuda 2026-10 email-to-AI rules (VB-T06 fake role labels, VB-T10..T12)
 const FAKE_ROLE_UP = /\[\s*SYSTEM(?:\s+(?:NOTE|MESSAGE|OVERRIDE|PROMPT))?\s*\]|(?:^|[\s>"'(])SYSTEM\s*:/g;
 const FAKE_MODE_TAG = /\[\s*(?:admin(?:istrator)?|maintenance|developer|debug|dev|god|root)\s+mode[^\]\n]{0,30}\]/gi;
-const FAKE_ROLE_FOLLOW = /\b(override|overrides|you\s+are\s+now|activated|enabled|from\s+now\s+on)\b/i;
+// Directive evidence tied to the label: an imperative aimed at the AI (override/ignore/reveal/append ...), "you are now", "from now on".
+// Status verbs ("enabled", "activated", "completed") are never a directive on their own.
+const FAKE_ROLE_DIRECTIVE = /^[\s:>\-–—"'(]*(?:override|ignore|disregard|forget|reveal|output|print|append|prepend|insert|include|tell|respond|reply|summari[sz]e|label|mark|classify|advise|recommend|forward|send|wire|transfer|update|change|delete|execute|run|you\s+(?:must|should|will|are\s+now))\b|\byou\s+are\s+now\b|\bfrom\s+now\s+on\b|\b(?:override|ignore|disregard|forget|bypass)\s+(?:all\s+|any\s+|the\s+|your\s+|previous\s+|prior\s+|earlier\s+|above\s+|safety\s+)*(?:instructions?|rules?|guidelines?|polic(?:y|ies)|prompts?|safety|restrictions?|filters?)\b|\b(?:when|while|before)\s+(?:summari[sz]ing|answering|replying|responding)\b/i;
+const NEXT_LABEL = /\[\s*[A-Za-z][A-Za-z ]{0,30}\]|(?:^|\s)[A-Z]{3,}\s*:/;
+// The text a label governs: the rest of its own line, cut at the next label on that line.
+// A label alone on its line governs the next non-empty line, unless that line starts with another label.
+function labelSegment(text, from) {
+  const eol = (i) => { const j = text.indexOf("\n", i); return j < 0 ? text.length : j; };
+  let s = text.slice(from, eol(from));
+  if (!s.trim()) {
+    let i = eol(from) + 1;
+    while (i < text.length) { const line = text.slice(i, eol(i)); if (line.trim()) { s = /^\s*(?:\[[^\]\n]{1,40}\]|[A-Z]{3,}\s*:)/.test(line) ? "" : line; break; } i = eol(i) + 1; }
+  }
+  const nl = s.slice(1).search(NEXT_LABEL);
+  if (nl >= 0) s = s.slice(0, nl + 1);
+  return s.slice(0, 300);
+}
 // Returns { kind: "system" | "mode", text } for a label followed by directive text, else null.
 export function fakeRoleLabel(text) {
   for (const [re, kind] of [[FAKE_ROLE_UP, "system"], [FAKE_MODE_TAG, "mode"]]) {
     re.lastIndex = 0; let m;
     while ((m = re.exec(text))) {
-      const follow = text.slice(m.index, m.index + 300);
-      if (instructionHits(follow).length || agentDirected(follow) || FAKE_ROLE_FOLLOW.test(follow)) { re.lastIndex = 0; return { kind, text: follow.trim() }; }
+      const seg = labelSegment(text, m.index + m[0].length);
+      if (seg.trim() && (instructionHits(seg).length || agentDirected(seg) || FAKE_ROLE_DIRECTIVE.test(seg))) { re.lastIndex = 0; return { kind, text: (m[0] + seg).trim() }; }
     }
   }
   return null;
 }
 const PAY_CHANGE = /\b(?:update|change|replace|switch|modify|redirect|correct)\b[^.\n]{0,60}?\b(?:vendor|supplier|payee|beneficiary|bank(?:ing)?|payment|remittance|wire|ach)\s+(?:details|info(?:rmation)?|account|instructions|data)\b|\b(?:wire|transfer|send|remit|pay)\b[^.\n]{0,60}?\b(?:to|into)\s+(?:the\s+|our\s+|a\s+|this\s+)?(?:new\s+)?(?:account|acct|iban)\b|\bnew\s+(?:bank|banking|payment|remittance)\s+(?:details|account|instructions)\b/i;
 const ACCT_NUM = /\b(?:account|acct|a\/c|iban|routing|aba|sort\s*code|swift|bic)\b\W{0,6}(?:no\.?|number|#)?\W{0,4}\d[\d -]{5,}\d|\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}\b/i;
-export function paymentChange(text) { return PAY_CHANGE.test(text) && ACCT_NUM.test(text) ? (text.match(PAY_CHANGE) || [""])[0] : null; }
+// Negated or anti-fraud wording ("do not change", "never change", "verify before changing") is not a change request.
+const PAY_NEGATED = /(?:\b(?:not|never|don't|dont|do\s+not|does\s+not|doesn't|cannot|can't|won't|will\s+not|shouldn't|should\s+not|must\s+not|mustn't|no\s+one\s+will|nobody\s+will|refuse\s+to|without\s+(?:first\s+)?verifying)\s+(?:\w+\s+){0,3}|\b(?:before|prior\s+to)\s+(?:\w+\s+){0,1}|\b(?:requests?|attempts?|emails?)\s+to\s+)$/i;
+const ACCT_OLD = /\b(?:existing|current|old|previous|on\s+file|registered|usual|known)\b[^.\n\d]{0,25}$/i;
+const PAY_CHANGE_G = new RegExp(PAY_CHANGE.source, "gi");
+const ACCT_NUM_G = new RegExp(ACCT_NUM.source, "gi");
+// A change instruction (not negated) plus an account/routing/IBAN number that belongs to the requested NEW details.
+export function paymentChange(text) {
+  PAY_CHANGE_G.lastIndex = 0; let m;
+  while ((m = PAY_CHANGE_G.exec(text))) {
+    const pre = text.slice(Math.max(0, m.index - 40), m.index);
+    if (PAY_NEGATED.test(pre)) continue;
+    const lo = Math.max(0, m.index - 120), hi = Math.min(text.length, m.index + m[0].length + 250);
+    const win = text.slice(lo, hi);
+    ACCT_NUM_G.lastIndex = 0; let n;
+    while ((n = ACCT_NUM_G.exec(win))) {
+      const before = text.slice(Math.max(0, lo + n.index - 40), lo + n.index);
+      if (!ACCT_OLD.test(before)) { PAY_CHANGE_G.lastIndex = 0; return m[0]; }
+    }
+  }
+  PAY_CHANGE_G.lastIndex = 0;
+  return null;
+}
 const MODE_CLAIM = /\b(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic|god|root|sudo)\s+mode\b[^.\n]{0,25}?\b(?:activated|enabled|engaged|unlocked|is\s+on)\b|\byou\s+are\s+(?:now\s+)?in\s+(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic)\s+mode\b|\[\s*(?:admin(?:istrator)?|maintenance|developer|debug)\s+mode[^\]\n]{0,30}\]/i;
 const AUTH_TEST = /\bthis\s+is\s+(?:an?\s+)?(?:authori[sz]ed|sanctioned|approved|official)\s+(?:security|penetration|pen|red[- ]team)\s+(?:test|exercise|audit)\b/i;
 const REVEAL_REQ = /\b(?:output|print|reveal|show|display|list|share|repeat|give|dump|provide|disclose|expose|return)\b[\s\S]{0,120}?\b(?:system\s+prompt|(?:initial|original|hidden)\s+instructions|instructions\s+you\s+were\s+given|api[ _-]?keys?|connection\s+strings?|database\s+(?:credentials|passwords?|urls?)|environment\s+variables|access\s+tokens?|private\s+keys?|your\s+(?:configuration|config))\b/gi;

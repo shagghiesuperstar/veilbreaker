@@ -7,10 +7,10 @@ description: Use when the owner asks what VeilBreaker has seen, for the daily di
 **Step 0:** follow [step-0-untrusted-content](../step-0-untrusted-content/SKILL.md) first.
 
 ## What it is
-Every call to a VeilBreaker tool appends one metadata-only line to the event log (`VEILBREAKER_LOG`, default `~/.veilbreaker/events.jsonl`): time, tool, verdict or decision, mode, max severity, TTP ids, egress sink, a reduced host (registrable domain only; IP literals become `<ipv4-private>` / `<ipv4-public>` / `<ipv6-private>` / `<ipv6-public>`), a sha256 of the input, its length, and the duration. It never stores raw input, page text, arguments, URLs with paths or queries, emails or secrets. The log rotates at 10 MB and keeps one old file. `report` calls are not logged, so a quiet day reads "0 events".
+Every call to a VeilBreaker tool appends one metadata-only line to the event log (`VEILBREAKER_LOG`, default `~/.veilbreaker/events.jsonl`): time, tool, verdict or decision, mode, max severity, TTP ids, egress sink, a reduced host (registrable domain only; IP literals become `<ipv4-blocked>` / `<ipv4-public>` / `<ipv6-blocked>` / `<ipv6-public>`, where blocked = any range the SSRF guard refuses), a sha256 of the input, its length, and the duration. It never stores raw input, page text, arguments, URLs with paths or queries, emails or secrets. The log rotates at 10 MB and keeps one old file. `report` calls are not logged, so a quiet day reads "0 events".
 
 ## Upgrading
-A fresh install lists 8 tools. When upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, or run `node server/index.mjs --cli report` on the same log.
+A fresh install lists 8 tools. When upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, then remove the old `veilbreaker` connector (so two connectors never write to one log); or run `node server/index.mjs --cli report` on the same log.
 
 ## How to read `report`
 1. Call `report` with `since` (`24h`, `7d`, or an ISO date/time) and optionally `group_by` (`ttp`, `tool`, `host`, `day`).

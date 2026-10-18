@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
-import { handle, appendEvent, buildEvent, egressSeverity, readEvents, report, renderDashboard, resolveBind, serveDashboard, reduceHost, parseSince, logPath, DEFAULT_LOG, egressCheck } from "../server/index.mjs";
+import { VERSION, ipBlocked, handle, appendEvent, buildEvent, egressSeverity, readEvents, report, renderDashboard, resolveBind, serveDashboard, reduceHost, parseSince, logPath, DEFAULT_LOG, egressCheck } from "../server/index.mjs";
 const root = new URL("..", import.meta.url).pathname;
 const SERVER = path.join(root, "server/index.mjs");
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "vb-watch-"));
@@ -55,7 +55,7 @@ test("log: never stores raw input, URLs with path/query, emails or secrets", asy
   assert.equal(ev.find((e) => e.sink === "email").host, null);
   assert.equal(ev.find((e) => e.sink === "dns").host, "attacker.net");
   assert.equal(ev.find((e) => e.tool === "safe_fetch").error, true);
-  assert.equal(ev.find((e) => e.tool === "safe_fetch").host, "<ipv4-private>");
+  assert.equal(ev.find((e) => e.tool === "safe_fetch").host, "<ipv4-blocked>");
   assert.ok(!raw.includes("127.0.0.1"), "log contains an IP literal");
 });
 
@@ -258,19 +258,19 @@ test("every egress deny is logged with a severity of at least high; allow is non
 });
 
 // ---- FIX-ORDER-VB-030-R1
-test("reduceHost coarsens IP literals to private/public labels (no IP is ever logged)", async () => {
-  for (const [ip, want] of [["127.0.0.1", "<ipv4-private>"], ["10.1.2.3", "<ipv4-private>"], ["169.254.169.254", "<ipv4-private>"], ["8.8.8.8", "<ipv4-public>"], ["1.2.3.4", "<ipv4-public>"],
-    ["[::1]", "<ipv6-private>"], ["fd00::5", "<ipv6-private>"], ["::ffff:192.168.1.1", "<ipv6-private>"], ["2606:4700::1111", "<ipv6-public>"]]) assert.equal(reduceHost(ip), want, ip);
+test("reduceHost coarsens IP literals to blocked/public labels (every SSRF-refused range is blocked) (no IP is ever logged)", async () => {
+  for (const [ip, want] of [["127.0.0.1", "<ipv4-blocked>"], ["10.1.2.3", "<ipv4-blocked>"], ["169.254.169.254", "<ipv4-blocked>"], ["203.0.113.9", "<ipv4-blocked>"], ["192.0.2.1", "<ipv4-blocked>"], ["100.64.0.1", "<ipv4-blocked>"], ["2001:db8::1", "<ipv6-blocked>"], ["8.8.8.8", "<ipv4-public>"], ["1.2.3.4", "<ipv4-public>"],
+    ["[::1]", "<ipv6-blocked>"], ["fd00::5", "<ipv6-blocked>"], ["::ffff:192.168.1.1", "<ipv6-blocked>"], ["2606:4700::1111", "<ipv6-public>"]]) assert.equal(reduceHost(ip), want, ip);
   const file = path.join(tmp(), "events.jsonl");
   await withLog(file, async () => {
     await call("egress_check", { sink: "image", args: { url: "http://203.0.113.9/p.png?q=1" } });
     await call("egress_check", { sink: "link", args: { url: "https://[2606:4700::1111]/x" } });
   });
   const ev = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  assert.deepEqual(ev.map((e) => e.host), ["<ipv4-private>", "<ipv6-public>"]);
+  assert.deepEqual(ev.map((e) => e.host), ["<ipv4-blocked>", "<ipv6-public>"]);
   assert.ok(!/203\.0\.113|2606:4700/.test(fs.readFileSync(file, "utf8")));
   const html = renderDashboard(report({}, { file }));
-  assert.match(html, /&lt;ipv4-private&gt;/); assert.doesNotMatch(html, /<ipv4/);
+  assert.match(html, /&lt;ipv4-blocked&gt;/); assert.doesNotMatch(html, /<ipv4/);
 });
 test("egress handling is surface-aware: MCP says recorded, CLI and direct library calls say not recorded", async () => {
   const file = path.join(tmp(), "events.jsonl");
@@ -303,7 +303,7 @@ test("stdio transport: initialize + tools/list (8 tools) + tools/call scan", asy
   const rpc = (method, params) => new Promise((resolve, reject) => { const n = ++id; const t = setTimeout(() => reject(new Error(`timeout ${method}`)), 10000); waiting.set(n, (m) => { clearTimeout(t); resolve(m); }); proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: n, method, params }) + "\n"); });
   try {
     const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
-    assert.equal(init.result.serverInfo.name, "veilbreaker"); assert.equal(init.result.serverInfo.version, "0.3.0");
+    assert.equal(init.result.serverInfo.name, "veilbreaker"); assert.equal(init.result.serverInfo.version, VERSION);
     proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
     const list = await rpc("tools/list", {});
     assert.equal(list.result.tools.length, 8); assert.ok(list.result.tools.some((t) => t.name === "report"));
@@ -312,4 +312,12 @@ test("stdio transport: initialize + tools/list (8 tools) + tools/call scan", asy
     assert.equal(j.verdict, "suspicious"); assert.ok(j.findings.some((f) => f.ttp === "VB-T01"));
   } finally { proc.stdin.end(); proc.kill(); }
   assert.equal(JSON.parse(fs.readFileSync(file, "utf8").trim()).tool, "scan");
+});
+
+test("reduceHost label is blocked exactly when ipBlocked refuses the address", () => {
+  for (const ip of ["0.0.0.1", "10.0.0.1", "100.64.0.1", "127.0.0.1", "169.254.169.254", "172.16.0.1", "192.0.0.1", "192.0.2.1", "192.168.0.1", "198.51.100.1", "203.0.113.9", "224.0.0.1", "240.0.0.1", "8.8.8.8", "198.18.0.1"])
+    assert.equal(reduceHost(ip), ipBlocked(ip) ? "<ipv4-blocked>" : "<ipv4-public>", ip);
+  for (const ip of ["::1", "fd00::1", "fe80::1", "ff02::1", "2001:db8::1", "::ffff:10.0.0.1", "64:ff9b::7f00:1", "2606:4700::1111"])
+    assert.equal(reduceHost(ip), ipBlocked(ip) ? "<ipv6-blocked>" : "<ipv6-public>", ip);
+  assert.doesNotMatch(JSON.stringify([reduceHost("10.0.0.1"), reduceHost("::1")]), /private/);
 });

@@ -14,7 +14,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.3.1";
 const env = process.env;
 const maxInput = () => (Number(env.VEILBREAKER_MAX_INPUT) > 0 ? Number(env.VEILBREAKER_MAX_INPUT) : 1_000_000); // chars accepted by reveal/scan
 const MAX_DECODED = 64_000;        // total decoded bytes per call
@@ -797,13 +797,13 @@ export function logPath() {
 }
 export function currentMode() { let m = String(env.VEILBREAKER_MODE || "shadow").toLowerCase(); if (m === "enforce") m = "strict"; return m === "strict" ? "strict" : "shadow"; }
 // Reduce a hostname to its registrable domain (last two labels, three for short second-level labels like co.uk).
-// IP literals are never logged: they become <ipv4-private|public> / <ipv6-private|public> (private = refused by ipBlocked).
-export const HOST_LABELS = ["<ipv4-private>", "<ipv4-public>", "<ipv6-private>", "<ipv6-public>", "<non-ascii-host>"];
+// IP literals are never logged: they become <ipv4-blocked|public> / <ipv6-blocked|public> (blocked = any range ipBlocked refuses).
+export const HOST_LABELS = ["<ipv4-blocked>", "<ipv4-public>", "<ipv6-blocked>", "<ipv6-public>", "<non-ascii-host>"];
 export function reduceHost(h) {
   if (!h) return null;
   h = String(h).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   const v4 = parseV4(h), v6 = !v4 && parseV6(h);
-  if (v4 || v6) return `<ipv${v4 ? 4 : 6}-${ipBlocked(v4 || h) ? "private" : "public"}>`;
+  if (v4 || v6) return `<ipv${v4 ? 4 : 6}-${ipBlocked(v4 || h) ? "blocked" : "public"}>`;
   if (!/^[a-z0-9.-]+$/.test(h)) return "<non-ascii-host>";
   const l = h.split(".").filter(Boolean);
   if (l.length <= 2) return l.join(".");

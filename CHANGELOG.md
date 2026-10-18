@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-10-18)
+- L1: the upgrade note (README, getting-started and watch-and-report skills, Watch template README and persona) now says to remove the old `veilbreaker` connector after adding it under a new name, so two connectors never write to one log.
+- L2: IP-literal hosts in the event log are labelled `<ipv4-blocked>` / `<ipv6-blocked>` (was `-private`) for every range the SSRF guard refuses, including TEST-NET ranges; `<ipv4-public>` / `<ipv6-public>` unchanged. Version 0.3.1 in all manifests and the server.
+
 ## 0.3.0 (2026-10-18)
 - **New: metadata-only event log.** Every MCP tool call appends one JSON line to `VEILBREAKER_LOG` (default `~/.veilbreaker/events.jsonl`; `VEILBREAKER_LOG=off` disables it). Fields: ts, tool, verdict, decision, mode, max_severity, ttps, sink, host (registrable domain only), input_sha256, input_chars, duration_ms, version, plus egress `reasons`, `mcp_changes` and `error`. Never stores raw input, page text, arguments, URLs with paths or queries, emails or secrets. Egress reason codes are mapped to catalog TTP ids (e.g. PRIVATE_DATA_IN_ARGS → VB-E05). Rotates at 10 MB and keeps one old file. A log write failure never breaks the tool call; it is returned as an extra note. `report` calls are not logged.
 - **New MCP tool `report`** `{since?: ISO|"24h"|"7d", group_by?: "ttp"|"tool"|"host"|"day"}`: calls; suspicious/review/clean/unsupported; egress deny vs allow and shadow-only denies; top TTPs with catalog names and citations; top hosts; mcp_verify changes; log_path, first_event, last_event; per-day counts. An empty log returns explicit zeros and "0 events". 8 tools in total.

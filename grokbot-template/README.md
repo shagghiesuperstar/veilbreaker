@@ -42,7 +42,7 @@ Contents:
 - Plugin: `veilbreaker`
 - Getting started (the getting-started skill): install, set `VEILBREAKER_MODE`, run the first scan, run `report`, open the dashboard.
 
-A fresh install lists 8 tools. When upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, or run `node server/index.mjs --cli report` on the same log.
+A fresh install lists 8 tools. When upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, then remove the old `veilbreaker` connector (so two connectors never write to one log); or run `node server/index.mjs --cli report` on the same log.
 
 The routine format has no schedule field, so the 08:00 / weekly / daily timing is stated in each routine's description; set the schedule when you create the routine.
 

@@ -102,9 +102,7 @@ npm test                          # same as: node --test tests/*.test.mjs
 Every rule has an attack fixture that must be caught and a benign look-alike that must not be flagged (emoji ZWJ and tag-flag sequences, Hebrew/Arabic bidi text, Persian/Hindi joiners, Japanese mixed kana/kanji, single-script Cyrillic/Greek/Armenian words, data:image base64, hex hashes, descriptive alt/aria/meta text, developer comments, decoding tutorials). Egress has 12 exfil patterns that must be blocked and 12 benign flows that must be allowed. Tests point `VEILBREAKER_LOG` and `VEILBREAKER_PIN_FILE` at temp files (`tests/helpers/isolate-log.mjs`), so they never touch `~/.veilbreaker`.
 
 ## Grok Bot template
-`grokbot-template/veilbreaker-guard.template.json` is a "VeilBreaker Guard" bot (profile, 4 memories, 11 plugin skills copied verbatim, a daily MCP pin check, a weekly self-test).
-
-`grokbot-template/veilbreaker-watch.template.json` (v0.3.0) is a "VeilBreaker Watch" bot: it installs and configures VeilBreaker, then reports on it (4 memories, 4 plugin skills copied verbatim including the new `watch-and-report`, a daily 08:00 digest from `report`, a weekly local dashboard file, and a daily MCP pin check). See `grokbot-template/README.md`.
+`grokbot-template/veilbreaker.template.json` is one "VeilBreaker" bot (0.3.1: the Guard and Watch templates combined). It checks untrusted content and outbound data in flight (`safe_fetch`, `reveal`, `scan`, `egress_check`, `mcp_pin`, `mcp_verify`) and reports on a schedule (`report`, `ttp_catalog`, local dashboard): profile, 8 memories, 12 plugin skills copied verbatim, and 4 routines (daily 08:00 digest from `report`, weekly local dashboard file, daily MCP pin check, weekly self-test). See `grokbot-template/README.md`.
 
 ## License
 MIT

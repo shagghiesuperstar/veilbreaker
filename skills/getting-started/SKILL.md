@@ -12,7 +12,7 @@ Install the VeilBreaker plugin (repo: https://github.com/shagghiesuperstar/veilb
 ## 2. Configure and connect
 Set `VEILBREAKER_MODE`: `shadow` (the default: a deny is recorded to the event log and reported to the owner) or `strict` (same, and the bot is expected to stop the action on deny). VeilBreaker cannot block host tools itself in either mode. Other optional settings: `VEILBREAKER_LOG` (event log path, default `~/.veilbreaker/events.jsonl`; `off` disables it), `VEILBREAKER_PIN_FILE`, `VEILBREAKER_MAX_INPUT`.
 
-Confirm the `veilbreaker` MCP server is connected and lists 8 tools: `safe_fetch`, `reveal`, `scan`, `egress_check`, `mcp_pin`, `mcp_verify`, `report`, `ttp_catalog`. Upgrading from 0.2.x: the host caches the tool list from install time. Remove and re-add the `veilbreaker` connector (a restart is not enough) so `report` appears; until then run `node server/index.mjs --cli report` on the same log.
+Confirm the `veilbreaker` MCP server is connected and lists 8 tools: `safe_fetch`, `reveal`, `scan`, `egress_check`, `mcp_pin`, `mcp_verify`, `report`, `ttp_catalog`. A fresh install lists 8 tools. When upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, or run `node server/index.mjs --cli report` on the same log.
 
 ## 3. First scan
 1. `ttp_catalog` to list what is covered.

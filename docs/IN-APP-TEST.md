@@ -17,6 +17,7 @@
 | egress_check: markdown-image exfil | in-app (after one Auto-review block, approved by the owner) | PASS: deny, shadow, new `handling` wording |
 | event log written, metadata only | `~/.veilbreaker/events.jsonl` | PASS: 4 lines at version 0.3.0, no raw content |
 | `report` since=24h | **CLI, same log, in-app report tool unavailable** | PASS on CLI; NOT callable in-app (see finding 1) |
+| `report` since=24h | in-app, connector re-added under a new name (10:27 AM CT) | PASS: same numbers as the CLI run (see Finding 1: resolved) |
 | dashboard `--since 24h` | CLI | PASS: HTML written and viewed (not committed) |
 | egress deny severity in the log | log line 4 | FAIL in e6f3002: `max_severity` was `"none"`; fixed after this run (see finding 2) |
 
@@ -24,9 +25,30 @@
 
 After RestartMcpServers a new connector process ran the v0.3.0 code: it wrote `~/.veilbreaker/events.jsonl` with `"version":"0.3.0"`. But the Grok Bot tool catalog still listed only the 7 tools from install time, so `report` was **not callable in-app**. Grok Bot keeps the tool list from install time, and a restart does not pick up new tools. Fixing it needs the connector removed and re-added, which is the owner's call. Until then, `report` was run with the CLI on the same log.
 
-### Finding 1: resolved (in-app report after connector re-add)
+### Finding 1: resolved (in-app report after connector re-add under a new name)
 
-PENDING: the in-app `report` output after the connector is removed and re-added will be recorded here.
+- **10:18 AM CT:** the `veilbreaker` connector was removed and re-added with the same command, then RestartMcpServers. Grok Bot still listed **7 tools** (no `report`). No new server process was spawned, while the server itself returns 8 tools over stdio.
+- **10:27 AM CT:** the connector was added under a **new name**, `veilbreaker-v030`, with the same command. Grok Bot listed **8 tools** at once, `report` included. The in-app `report` with since = 24h ran successfully (output below).
+- The old `veilbreaker` connector was then removed, so only `veilbreaker-v030` remains.
+
+In-app `report` since=24h — PASS. 4 calls; suspicious 2, review 0, clean 1, unsupported 0; egress checks 1, deny 1 (shadow-only 1, strict 0); errors 0; top TTP VB-T08 × 2; top host `attacker.example`; mcp_verify 0 runs; skipped_lines 0; first event 14:46:16.635Z, last event 14:51:47.923Z. The numbers match the earlier CLI run on the same log.
+
+Output, verbatim as saved (log_path changed to `~`; the `name` and `citation` of each `top_ttps` entry were trimmed when saving):
+
+```json
+{"version":"0.3.0","summary":"4 events since 2026-10-17T15:26:39.833Z","log_path":"~/.veilbreaker/events.jsonl","log_enabled":true,"since":"2026-10-17T15:26:39.833Z","mode":"shadow","modes_seen":{"shadow":4},"first_event":"2026-10-18T14:46:16.635Z","last_event":"2026-10-18T14:51:47.923Z","calls":4,"errors":0,"verdicts":{"suspicious":2,"review":0,"clean":1,"unsupported":0},"egress":{"checks":1,"deny":1,"allow":0,"deny_shadow_only":1,"deny_strict":0},"top_ttps":[{"ttp":"VB-T08","count":2},{"ttp":"VB-E01","count":1},{"ttp":"VB-E02","count":1},{"ttp":"VB-E05","count":1},{"ttp":"VB-T01","count":1},{"ttp":"VB-T07","count":1}],"top_hosts":[{"host":"attacker.example","count":1}],"mcp_verify":{"verify_runs":0,"runs_with_changes":0,"changes":0,"changed_runs":[]},"by_tool":{"scan":3,"egress_check":1},"by_day":[{"day":"2026-10-18","calls":4,"suspicious":2,"deny":1}],"skipped_lines":0}
+```
+
+The trimmed `top_ttps` names and citations, from `ttp_catalog` (the full in-app output carried these for each entry):
+
+| TTP | Count | Name | Citation |
+|---|---|---|---|
+| VB-T08 | 2 | KEY SIGNAL: text present ONLY in a hidden or decoded view | arXiv:2302.12173 (Greshake et al., Indirect Prompt Injection) |
+| VB-E01 | 1 | EchoLeak zero-click markdown-image exfil (incl. reference-style) | CVE-2025-32711; arXiv:2509.10540 (EchoLeak zero-click exfil in M365 Copilot) |
+| VB-E02 | 1 | Covert exfil via URL path / query / DNS subdomain through legit fetching | arXiv:2610.01768 (The Innocent Courier: covert exfiltration through legitimate LLM web fetching) |
+| VB-E05 | 1 | Secrets / session-private data in outbound args (plain, url, base64, hex) | arXiv:2503.18813 (CaMeL); arXiv:2505.23643 (FIDES); arXiv:2504.11703 (Progent) |
+| VB-T01 | 1 | Unicode TAG smuggling (U+E0000–E007F) | arXiv:2504.11168 (Hackett et al., Bypassing LLM Guardrails: character injection incl. Unicode tags/zero-width/homoglyphs) |
+| VB-T07 | 1 | Injection phrase in hidden HTML (phrase list, extra signal) | arXiv:2302.12173 (Greshake et al., Indirect Prompt Injection) |
 
 ## Finding 2: egress deny logged with `max_severity: "none"` (fixed)
 

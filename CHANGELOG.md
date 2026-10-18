@@ -16,12 +16,12 @@
   - Docs: a personal first name is removed from the docs.
   - Repo: `tests/test-output.txt` is untracked and gitignored; the local file is kept.
 - **Fix (found in the in-app run):** an egress deny was logged with `max_severity: "none"`. Every egress deny is now logged with at least `high` (`critical` for SECRET_IN_ARGS / PRIVATE_DATA_IN_ARGS), for any reason code; an allow stays `none`. New test in `tests/watch.test.mjs`.
-- Docs (R1): upgrade path from 0.2.x documented in the README, the getting-started and watch-and-report skills, and the Watch template README and persona: remove and re-add the `veilbreaker` connector so `report` appears (a restart is not enough); until then use `--cli report` on the same log.
+- Docs (R1, R2): upgrade note in the README, the getting-started and watch-and-report skills, and the Watch template README and persona, limited to what was verified: a fresh install lists 8 tools; when upgrading, Grok Bot may keep the old tool list (removing and re-adding under the same name, or restarting, did not refresh it in our test); if `report` is missing, add the connector under a new name, or run `--cli report` on the same log.
 - Fix (R1): egress `handling` is surface-aware. MCP calls say a deny is recorded to the event log; `--cli egress` says "CLI runs are not recorded to the event log"; direct library calls say they are not recorded.
 - Fix (R1): IP-literal hosts are no longer logged verbatim; they become `<ipv4-private>`, `<ipv4-public>`, `<ipv6-private>` or `<ipv6-public>` (private = refused by the SSRF guard's `ipBlocked`).
 - Fix (R1): `--cli dashboard --out` creates missing parent directories instead of failing with ENOENT.
 - Tests (R1): new stdio transport test (spawn the server; initialize, tools/list = 8 tools, tools/call scan).
-- In-app test (2026-10-18, Node v20.19.2, code e6f3002): 3 scans and 1 egress deny PASS; the event log is metadata only. Grok Bot kept the 7-tool list from install time after a restart, so `report` was not callable in-app and was run with the CLI on the same log. Details: [docs/IN-APP-TEST.md](docs/IN-APP-TEST.md).
+- In-app test (2026-10-18, Node v20.19.2, code e6f3002): 3 scans and 1 egress deny PASS; the event log is metadata only. Grok Bot kept the 7-tool list from install time after a restart, so `report` was not callable in-app and was run with the CLI on the same log. After the connector was added under a new name, the in-app `report` ran with the same numbers. Details: [docs/IN-APP-TEST.md](docs/IN-APP-TEST.md).
 - Version 0.3.0 in all manifests and the server.
 
 ## 0.2.3 (2026-10-17)

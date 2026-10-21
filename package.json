@@ -1,6 +1,6 @@
 {
   "name": "veilbreaker",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Deterministic Grok Bot MCP plugin for documented 2025-2026 prompt-injection concealment and exfiltration TTPs. Zero dependencies.",
   "type": "module",

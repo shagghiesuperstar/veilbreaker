@@ -14,7 +14,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
-export const VERSION = "0.3.1";
+export const VERSION = "0.3.2";
 const env = process.env;
 const maxInput = () => (Number(env.VEILBREAKER_MAX_INPUT) > 0 ? Number(env.VEILBREAKER_MAX_INPUT) : 1_000_000); // chars accepted by reveal/scan
 const MAX_DECODED = 64_000;        // total decoded bytes per call
@@ -334,16 +334,16 @@ export function decodeFollow(text) {
 // ---------------------------------------------------------------- Barracuda 2026-10 email-to-AI rules (VB-T06 fake role labels, VB-T10..T12)
 const FAKE_ROLE_UP = /\[\s*SYSTEM(?:\s+(?:NOTE|MESSAGE|OVERRIDE|PROMPT))?\s*\]|(?:^|[\s>"'(])SYSTEM\s*:/g;
 const FAKE_MODE_TAG = /\[\s*(?:admin(?:istrator)?|maintenance|developer|debug|dev|god|root)\s+mode[^\]\n]{0,30}\]/gi;
-// ALLOWLIST of AI-directed instructions (0.3.1 review round 2, widened and narrowed in round 3). Only these, in the text
+// ALLOWLIST of AI-directed instructions (Barracuda work, review round 2; widened and narrowed in rounds 3-4). Only these, in the text
 // the label governs, make a fake role label: anything else after [SYSTEM] / SYSTEM: / [ADMIN MODE ...] (status lines,
 // log messages) is not VB-T06. Round 3: earlier/preceding instructions, hidden/initial instructions, when replying/
 // answering, prepend; "act as" and "developer mode" only as directives aimed at the model, not as status reports.
 const FAKE_ROLE_DIRECTIVE = new RegExp([
-  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+|of\s+)*(?:previous|prior|above|earlier|preceding|original)\s+(?:instructions?|directions?|rules|guidelines|prompts?)\b/,
-  /\b(?:reveal|print|output|repeat|show|disclose|display|dump)\s+(?:all\s+|the\s+|your\s+|any\s+)*(?:system\s+prompt|(?:hidden|initial|original|secret|internal|system)\s+(?:instructions|prompt|rules))\b/,
+  /\b(?:ignore|disregard|forget)\s+(?:(?:all|any|the|your|of|each|every|these|those)\s+)*(?:(?:previous|prior|above|earlier|preceding|original)\s+(?:instructions?(?:\s+sets?)?|directions?|rules|guidelines|prompts?)\b|(?:instructions?(?:\s+sets?)?|directions?|rules|guidelines|prompts?)\s+(?:above|earlier|before|previously|so\s+far)\b)/,
+  /\b(?:reveal|print|output|repeat|show|disclose|display|dump)\s+(?:me\s+|us\s+)?(?:all\s+|the\s+|your\s+|any\s+)*(?:system\s+prompt|(?:hidden|initial|original|secret|internal|system)\s+(?:instructions|prompt|rules))\b/,
   /\byou\s+are\s+now\b/,
-  /(?:^\s*|[.!?:;]\s+|\b(?:you|assistant|ai|model|bot|chatbot|please|now)\s+(?:(?:must|should|will|shall|can|need\s+to|are\s+to)\s+)?(?:now\s+)?)act\s+as\b/,
-  /\b(?:enable|enter|activate|switch\s+(?:to|into)|turn\s+on|go\s+into|boot\s+into|start)\s+(?:the\s+|in\s+)?(?:developer|dev)\s+mode\b|\byou\s+are\s+(?:now\s+)?(?:in|running\s+in|operating\s+in)\s+(?:developer|dev)\s+mode\b/,
+  /(?:^\s*|[.!?:;]\s+|\b(?:you|assistant|ai|model|bot|chatbot|please|now)\s+(?:(?:must|should|will|shall|can|need\s+to|are\s+to)\s+)?(?:now\s+)?)act\s+as\b|(?:^\s*|[.!?:;,]\s+)(?:then|next|also|first|finally|instead|and\s+then)\s*,?\s+act\s+as\b|(?:^\s*|[.!?:;]\s+)[-*•–—]\s*act\s+as\b|\b(?:assistant|ai|model|bot|chatbot|grok|claude|chatgpt|gpt)\s*[,:]\s*act\s+as\b/,
+  /\b(?:enable|enter|activate|switch\s+(?:to|into)|turn\s+on|go\s+into|boot\s+into|start)\s+(?:the\s+|in\s+)?(?:developer|dev)\s+mode\b|\byou\s+are\s+(?:now\s+)?(?:in|running\s+in|operating\s+in)\s+(?:developer|dev)\s+mode\b|\b(?:developer|dev)\s+mode\s*[:\-–—]\s*(?:please\s+)?(?:respond|answer|reply|ignore|disregard|bypass|output|reveal|print|generate|write|comply|obey|say|act|you\s+(?:must|will|should|can|are)|from\s+now\s+on|no\s+(?:restrictions|filters|limits|rules))\b/,
   /\bwhen\s+summari[sz]ing\b|\bwhen\s+(?:you\s+)?(?:reply|replying|respond|responding|answer|answering)\b|\bin\s+your\s+(?:response|reply|answer|summary)\b/,
   /\b(?:append|insert|include|prepend)\s+(?:the\s+)?(?:following\s+)?sentence\b|\b(?:append|prepend|add)\b[^.\n]{0,60}?\bto\s+(?:every|each|all|your|the)\s+(?:answers?|repl(?:y|ies)|responses?|summar(?:y|ies)|messages?|outputs?)\b/,
   /\b(?:do\s+not|don't)\s+(?:tell|mention)\b/,
@@ -374,7 +374,7 @@ export function fakeRoleLabel(text) {
   }
   return null;
 }
-// VB-T10 ALLOWLIST (0.3.1 review round 2): an account/routing/IBAN number counts only when it is introduced as the NEW
+// VB-T10 ALLOWLIST (Barracuda work, review round 2): an account/routing/IBAN number counts only when it is introduced as the NEW
 // destination: "new account/routing N", "change ... to account N", "update ... to N", "send/remit/pay to N".
 // The matched span must name payment or bank details (so "update the ticket to 1234567" is not a payment change).
 const PAY_NUM = String.raw`(?:\d[\d -]{5,}\d|[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7})`;
@@ -398,29 +398,40 @@ const PAY_ACCT_BEFORE_NUM = new RegExp(String.raw`${PAY_ACCT}\W{0,6}(?:is\s+)?${
 const PAY_DETAIL = /\b(?:account|acct|a\/c|iban|routing|aba|swift|bic|sort\s*code|bank(?:ing)?\s+(?:details|info(?:rmation)?|coordinates)|(?:payment|remittance|wire|ach|payee|beneficiary)\s+(?:details|info(?:rmation)?|instructions|coordinates))\b/i;
 const PAY_NOT_DEST = /\b(?:date|dated|reference|ref|invoice\s+(?:number|no\.?|#|id)|ticket|case|order|po|purchase\s+order|tracking|serial|version|build)\b/i;
 const PAY_DATE_NUM = /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{2,4})$/;
-const PAY_QUOTED_REFUSAL = /\b(?:reject|refuse|decline|report|flag|block|delete|quarantine|beware\s+of|watch\s+(?:out\s+)?for|(?:do\s+not|don't|never)\s+(?:act\s+on|follow|honou?r|process|obey))\s+(?:any\s+|all\s+|the\s+|such\s+)?(?:messages?|e-?mails?|requests?|notes?|instructions?|calls?|anything|letters?|texts?)\b[^.\n]{0,40}?(?:saying|that\s+says?|stating|asking(?:\s+you)?(?:\s+to)?|requesting|claiming|like|such\s+as|reading|with)?\s*[:"“'‘]?\s*$/i;
+// 0.3.2 R4-F1: two groups of quote frames. A request quoted after a GENUINE refusal verb (reject, refuse, decline, ignore,
+// do not act on / follow / honour / process / obey) is skipped by design (README Known gaps). Every other frame (report,
+// flag, block, delete, quarantine, forward, escalate, beware of, watch out for, ...) only caps the finding at review, like
+// the anti-fraud cue: an attacker can wrap a real redirect in it, so it never drops the finding to clean.
+const PAY_FRAME_TAIL = String.raw`\s+(?:any\s+|all\s+|the\s+|such\s+|these\s+|those\s+)?(?:messages?|e-?mails?|requests?|notes?|instructions?|calls?|anything|letters?|texts?|memos?|notices?)\b[^.\n]{0,40}?(?:saying|that\s+says?|stating|asking(?:\s+you)?(?:\s+to)?|requesting|claiming|like|such\s+as|reading|with)?\s*[:"“'‘]?\s*$`;
+const PAY_REFUSAL_SKIP = new RegExp(String.raw`\b(?:reject|refuse|decline|ignore|(?:do\s+not|don't|never)\s+(?:act\s+on|follow|honou?r|process|obey))` + PAY_FRAME_TAIL, "i");
+const PAY_FRAME_CAP = new RegExp(String.raw`\b(report|flag|block|delete|quarantine|forward|escalate|beware\s+of|be\s+(?:wary|careful|suspicious)\s+of|watch\s+(?:out\s+)?for|look\s+out\s+for)` + PAY_FRAME_TAIL, "i");
+// Returns false (not a destination), or { frame } where frame is the capping frame verb (review at most) or null.
 function payDestOk(m, text) {
   const num = m[0].match(new RegExp(PAY_NUM + "$"))?.[0] ?? "";
   if (PAY_DATE_NUM.test(num.trim())) return false;
   const sentence = text.slice(0, m.index).split(/[.!?\n](?=\s|$)/).pop();
-  if (PAY_QUOTED_REFUSAL.test(sentence)) return false;
-  if (PAY_ACCT_BEFORE_NUM.test(m[0]) || /^[A-Z]{2}\d{2}/.test(num)) return true;
-  return PAY_DETAIL.test(m[0]) && !PAY_NOT_DEST.test(m[0]);
+  if (PAY_REFUSAL_SKIP.test(sentence)) return false;
+  const frame = sentence.match(PAY_FRAME_CAP)?.[1] ?? null;
+  if (PAY_ACCT_BEFORE_NUM.test(m[0]) || /^[A-Z]{2}\d{2}/.test(num)) return { frame };
+  return PAY_DETAIL.test(m[0]) && !PAY_NOT_DEST.test(m[0]) ? { frame } : false;
 }
-// Returns { evidence, cue } for a hidden instruction that introduces a new payment destination, else null.
-// cue is the anti-fraud word found in the same block (caller caps the finding at review), or null (critical).
+// Returns { evidence, cue, frame } for a hidden instruction that introduces a new payment destination, else null.
+// cue is the anti-fraud word or the capping frame verb (caller caps the finding at review), or null (critical); frame is
+// true when the cap comes from a report/flag/block/... frame. An unframed destination in the block wins over a framed one.
 export function paymentChange(text) {
-  PAY_DEST.lastIndex = 0; let m;
+  PAY_DEST.lastIndex = 0; let m, framed = null;
   while ((m = PAY_DEST.exec(text))) {
     if (!PAY_WORD.test(m[0])) continue;
     if (PAY_NEGATED.test(text.slice(Math.max(0, m.index - 40), m.index))) continue;
-    if (!payDestOk(m, text)) continue;
+    const ok = payDestOk(m, text);
+    if (!ok) continue;
+    if (ok.frame) { framed ??= { evidence: m[0].slice(0, 160), cue: ok.frame, frame: true }; continue; }
     PAY_DEST.lastIndex = 0;
     const cue = text.match(PAY_ANTIFRAUD);
-    return { evidence: m[0].slice(0, 160), cue: cue ? cue[0] : null };
+    return { evidence: m[0].slice(0, 160), cue: cue ? cue[0] : null, frame: false };
   }
   PAY_DEST.lastIndex = 0;
-  return null;
+  return framed;
 }
 const MODE_CLAIM = /\b(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic|god|root|sudo)\s+mode\b[^.\n]{0,25}?\b(?:activated|enabled|engaged|unlocked|is\s+on)\b|\byou\s+are\s+(?:now\s+)?in\s+(?:admin(?:istrator)?|maintenance|developer|debug|diagnostic)\s+mode\b|\[\s*(?:admin(?:istrator)?|maintenance|developer|debug)\s+mode[^\]\n]{0,30}\]/i;
 const AUTH_TEST = /\bthis\s+is\s+(?:an?\s+)?(?:authori[sz]ed|sanctioned|approved|official)\s+(?:security|penetration|pen|red[- ]team)\s+(?:test|exercise|audit)\b/i;
@@ -589,7 +600,7 @@ export function scan(input) {
     else if (unquotedRaw !== null) { const q = fakeRoleLabel(v.normalized); if (q) add("VB-T06", "low", "Fake role label in a quoted example (pre/code/blockquote)", q.text, "barracuda"); } }
   { let pcw = null;
     for (const [where, t] of concealedTexts) { const pc = paymentChange(t); if (!pc) continue; if (!pc.cue) { pcw = null; add("VB-T10", "critical", `Hidden instruction to change payment or bank details to a new account/routing number (${where})`, t, "barracuda"); break; } pcw ??= [where, pc]; }
-    if (pcw) add("VB-T10", "medium", `Hidden payment-details change to a new account/routing number, capped at review: the same hidden text also has anti-fraud wording ("${pcw[1].cue}") (${pcw[0]})`, pcw[1].evidence, "barracuda"); }
+    if (pcw) add("VB-T10", "medium", `Hidden payment-details change to a new account/routing number, capped at review: ${pcw[1].frame ? `it is quoted after a "${pcw[1].cue}" frame` : `the same hidden text also has anti-fraud wording ("${pcw[1].cue}")`} (${pcw[0]})`, pcw[1].evidence, "barracuda"); }
   const hiddenOr = (fn) => { for (const [where, t] of concealedTexts) { const r = fn(t); if (r) return [where, r]; } return null; };
   for (const [fn, sevV, sevH, title] of [
     [configRevealClaim, "medium", "high", "Fake admin/maintenance/developer mode or 'authorized security test' asking for the system prompt, keys or connection strings"],

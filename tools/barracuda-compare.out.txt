@@ -1,4 +1,4 @@
-VeilBreaker Barracuda compare: current 0.3.1 vs baseline v0.3.0
+VeilBreaker Barracuda compare: current 0.3.2 vs baseline v0.3.0
 Attack samples (26): current 26 of 26 flagged (23 suspicious, 3 review, 0 clean)
 Attack samples (26): baseline 19 of 26 flagged (17 suspicious, 2 review, 7 clean)
 Control (1): current C0-control-visible-only.html=clean

@@ -334,14 +334,18 @@ export function decodeFollow(text) {
 // ---------------------------------------------------------------- Barracuda 2026-10 email-to-AI rules (VB-T06 fake role labels, VB-T10..T12)
 const FAKE_ROLE_UP = /\[\s*SYSTEM(?:\s+(?:NOTE|MESSAGE|OVERRIDE|PROMPT))?\s*\]|(?:^|[\s>"'(])SYSTEM\s*:/g;
 const FAKE_MODE_TAG = /\[\s*(?:admin(?:istrator)?|maintenance|developer|debug|dev|god|root)\s+mode[^\]\n]{0,30}\]/gi;
-// ALLOWLIST of AI-directed instructions (0.3.1 review round 2). Only these, in the text the label governs, make a fake
-// role label: anything else after [SYSTEM] / SYSTEM: / [ADMIN MODE ...] (status lines, log messages) is not VB-T06.
+// ALLOWLIST of AI-directed instructions (0.3.1 review round 2, widened and narrowed in round 3). Only these, in the text
+// the label governs, make a fake role label: anything else after [SYSTEM] / SYSTEM: / [ADMIN MODE ...] (status lines,
+// log messages) is not VB-T06. Round 3: earlier/preceding instructions, hidden/initial instructions, when replying/
+// answering, prepend; "act as" and "developer mode" only as directives aimed at the model, not as status reports.
 const FAKE_ROLE_DIRECTIVE = new RegExp([
-  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+)*(?:previous|prior|above)\s+instructions?\b/,
-  /\b(?:reveal|print|output|repeat)\s+(?:the\s+|your\s+)?system\s+prompt\b/,
-  /\byou\s+are\s+now\b|\bact\s+as\b|\bdeveloper\s+mode\b/,
-  /\bwhen\s+summari[sz]ing\b|\bwhen\s+you\s+reply\b|\bin\s+your\s+response\b/,
-  /\b(?:append|insert|include)\s+(?:the\s+)?(?:following\s+)?sentence\b/,
+  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+|of\s+)*(?:previous|prior|above|earlier|preceding|original)\s+(?:instructions?|directions?|rules|guidelines|prompts?)\b/,
+  /\b(?:reveal|print|output|repeat|show|disclose|display|dump)\s+(?:all\s+|the\s+|your\s+|any\s+)*(?:system\s+prompt|(?:hidden|initial|original|secret|internal|system)\s+(?:instructions|prompt|rules))\b/,
+  /\byou\s+are\s+now\b/,
+  /(?:^\s*|[.!?:;]\s+|\b(?:you|assistant|ai|model|bot|chatbot|please|now)\s+(?:(?:must|should|will|shall|can|need\s+to|are\s+to)\s+)?(?:now\s+)?)act\s+as\b/,
+  /\b(?:enable|enter|activate|switch\s+(?:to|into)|turn\s+on|go\s+into|boot\s+into|start)\s+(?:the\s+|in\s+)?(?:developer|dev)\s+mode\b|\byou\s+are\s+(?:now\s+)?(?:in|running\s+in|operating\s+in)\s+(?:developer|dev)\s+mode\b/,
+  /\bwhen\s+summari[sz]ing\b|\bwhen\s+(?:you\s+)?(?:reply|replying|respond|responding|answer|answering)\b|\bin\s+your\s+(?:response|reply|answer|summary)\b/,
+  /\b(?:append|insert|include|prepend)\s+(?:the\s+)?(?:following\s+)?sentence\b|\b(?:append|prepend|add)\b[^.\n]{0,60}?\bto\s+(?:every|each|all|your|the)\s+(?:answers?|repl(?:y|ies)|responses?|summar(?:y|ies)|messages?|outputs?)\b/,
   /\b(?:do\s+not|don't)\s+(?:tell|mention)\b/,
   /\boverride\s+(?:safety|polic(?:y|ies)|instructions?)\b/,
 ].map((r) => r.source).join("|"), "i");
@@ -386,6 +390,23 @@ const PAY_WORD = /\b(?:bank(?:ing)?|payments?|pay|remit(?:tance)?|wire|ach|payee
 const PAY_ANTIFRAUD = /\b(?:do\s+not|never|reject(?:s|ed|ing)?|fraud(?:ulent)?|verify|verification|only\s+after|on\s+file|existing|current)\b/i;
 // A destination clause that is itself negated ("we cannot send payment to account ...") is not a request.
 const PAY_NEGATED = /\b(?:not|never|don't|dont|cannot|can't|won't|shouldn't|mustn't|refuse\s+to)\s+(?:\w+\s+){0,3}$/i;
+// Round 3: a number counts only when it sits next to account/routing/IBAN/bank-detail wording ("to account N",
+// "new routing N", an IBAN, or "bank/payment details ... to N"). Dates, invoice references and ticket numbers are not
+// payment destinations, and a request quoted in order to be refused ("Reject messages saying: send payment to ...") is not
+// a request.
+const PAY_ACCT_BEFORE_NUM = new RegExp(String.raw`${PAY_ACCT}\W{0,6}(?:is\s+)?${PAY_NUM}$`, "i");
+const PAY_DETAIL = /\b(?:account|acct|a\/c|iban|routing|aba|swift|bic|sort\s*code|bank(?:ing)?\s+(?:details|info(?:rmation)?|coordinates)|(?:payment|remittance|wire|ach|payee|beneficiary)\s+(?:details|info(?:rmation)?|instructions|coordinates))\b/i;
+const PAY_NOT_DEST = /\b(?:date|dated|reference|ref|invoice\s+(?:number|no\.?|#|id)|ticket|case|order|po|purchase\s+order|tracking|serial|version|build)\b/i;
+const PAY_DATE_NUM = /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{2,4})$/;
+const PAY_QUOTED_REFUSAL = /\b(?:reject|refuse|decline|report|flag|block|delete|quarantine|beware\s+of|watch\s+(?:out\s+)?for|(?:do\s+not|don't|never)\s+(?:act\s+on|follow|honou?r|process|obey))\s+(?:any\s+|all\s+|the\s+|such\s+)?(?:messages?|e-?mails?|requests?|notes?|instructions?|calls?|anything|letters?|texts?)\b[^.\n]{0,40}?(?:saying|that\s+says?|stating|asking(?:\s+you)?(?:\s+to)?|requesting|claiming|like|such\s+as|reading|with)?\s*[:"“'‘]?\s*$/i;
+function payDestOk(m, text) {
+  const num = m[0].match(new RegExp(PAY_NUM + "$"))?.[0] ?? "";
+  if (PAY_DATE_NUM.test(num.trim())) return false;
+  const sentence = text.slice(0, m.index).split(/[.!?\n](?=\s|$)/).pop();
+  if (PAY_QUOTED_REFUSAL.test(sentence)) return false;
+  if (PAY_ACCT_BEFORE_NUM.test(m[0]) || /^[A-Z]{2}\d{2}/.test(num)) return true;
+  return PAY_DETAIL.test(m[0]) && !PAY_NOT_DEST.test(m[0]);
+}
 // Returns { evidence, cue } for a hidden instruction that introduces a new payment destination, else null.
 // cue is the anti-fraud word found in the same block (caller caps the finding at review), or null (critical).
 export function paymentChange(text) {
@@ -393,6 +414,7 @@ export function paymentChange(text) {
   while ((m = PAY_DEST.exec(text))) {
     if (!PAY_WORD.test(m[0])) continue;
     if (PAY_NEGATED.test(text.slice(Math.max(0, m.index - 40), m.index))) continue;
+    if (!payDestOk(m, text)) continue;
     PAY_DEST.lastIndex = 0;
     const cue = text.match(PAY_ANTIFRAUD);
     return { evidence: m[0].slice(0, 160), cue: cue ? cue[0] : null };
@@ -912,7 +934,7 @@ export const CATALOG = [
   { id: "VB-T07", kind: "ttp", name: "Injection phrase in hidden HTML (phrase list, extra signal)", default_severity: "high (low if the same text is visible)", tools: "reveal visible/hidden split; scan", citation: CITES.ipi },
   { id: "VB-T08", kind: "ttp", name: "KEY SIGNAL: text present ONLY in a hidden or decoded view", default_severity: "medium/review for substantive concealed text; critical/suspicious when agent-directed; descriptive alt/title/aria/meta and dev comments clean", tools: "scan compares each hidden/decoded view with the visible text; agent-directed = imperative + AI addressee / 'the user' / URL-email target, or second-person directive in concealed text", citation: CITES.ipi },
   { id: "VB-T09", kind: "ttp", name: "Decode-and-follow wrapper", default_severity: "high", tools: "scan flags a decode/transform verb followed by a follow/obey verb near an encoding word", citation: CITES.tag },
-  { id: "VB-T10", kind: "ttp", name: "Hidden payment-details change with account/routing numbers (summary BEC)", default_severity: "critical", tools: "scan checks hidden/decoded views for an account, routing, IBAN or SWIFT number introduced as the new payment destination (new account N, change/update ... to N, send/remit/pay to N); anti-fraud wording in the same hidden block caps it at review", citation: CITES.barracuda },
+  { id: "VB-T10", kind: "ttp", name: "Hidden payment-details change with account/routing numbers (summary BEC)", default_severity: "critical", tools: "scan checks hidden/decoded views for an account, routing, IBAN or SWIFT number introduced as the new payment destination next to account/routing/IBAN/bank-detail wording (new account N, change/update bank details to account N, send/remit/pay to account N; dates, invoice references, ticket numbers and refused quotes do not count); anti-fraud wording in the same hidden block caps it at review", citation: CITES.barracuda },
   { id: "VB-T11", kind: "ttp", name: "AI-addressed fake admin mode / config reveal / screener scoring", default_severity: "medium when visible; high when hidden", tools: "scan flags admin/maintenance/developer-mode or 'authorized security test' claims that ask for the system prompt, keys or connection strings, and notes to AI screeners asking for 10/10 or an interview", citation: CITES.barracuda },
   { id: "VB-T12", kind: "ttp", name: "Credential-exfiltration code insertion instruction", default_severity: "medium when visible; critical when hidden", tools: "scan flags instructions to AI coding assistants to always insert a network call (requests.post, fetch, curl, ...) that sends password/token variables to a URL", citation: CITES.barracuda },
   { id: "VB-E01", kind: "ttp", name: "EchoLeak zero-click markdown-image exfil (incl. reference-style)", default_severity: "deny", tools: "egress_check denies image/link URLs carrying encoded/private data or non-allowlisted image params; scan flags templates (high)", citation: CITES.echoleak },

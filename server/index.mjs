@@ -334,16 +334,17 @@ export function decodeFollow(text) {
 // ---------------------------------------------------------------- Barracuda 2026-10 email-to-AI rules (VB-T06 fake role labels, VB-T10..T12)
 const FAKE_ROLE_UP = /\[\s*SYSTEM(?:\s+(?:NOTE|MESSAGE|OVERRIDE|PROMPT))?\s*\]|(?:^|[\s>"'(])SYSTEM\s*:/g;
 const FAKE_MODE_TAG = /\[\s*(?:admin(?:istrator)?|maintenance|developer|debug|dev|god|root)\s+mode[^\]\n]{0,30}\]/gi;
-// ALLOWLIST of AI-directed instructions (Barracuda work, review round 2; widened and narrowed in rounds 3-4). Only these, in the text
+// ALLOWLIST of AI-directed instructions (Barracuda work, review round 2; widened and narrowed in round 3; the round-4
+// widenings were reverted in round 5, see README Known gaps). Only these, in the text
 // the label governs, make a fake role label: anything else after [SYSTEM] / SYSTEM: / [ADMIN MODE ...] (status lines,
 // log messages) is not VB-T06. Round 3: earlier/preceding instructions, hidden/initial instructions, when replying/
 // answering, prepend; "act as" and "developer mode" only as directives aimed at the model, not as status reports.
 const FAKE_ROLE_DIRECTIVE = new RegExp([
-  /\b(?:ignore|disregard|forget)\s+(?:(?:all|any|the|your|of|each|every|these|those)\s+)*(?:(?:previous|prior|above|earlier|preceding|original)\s+(?:instructions?(?:\s+sets?)?|directions?|rules|guidelines|prompts?)\b|(?:instructions?(?:\s+sets?)?|directions?|rules|guidelines|prompts?)\s+(?:above|earlier|before|previously|so\s+far)\b)/,
-  /\b(?:reveal|print|output|repeat|show|disclose|display|dump)\s+(?:me\s+|us\s+)?(?:all\s+|the\s+|your\s+|any\s+)*(?:system\s+prompt|(?:hidden|initial|original|secret|internal|system)\s+(?:instructions|prompt|rules))\b/,
+  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+|of\s+)*(?:previous|prior|above|earlier|preceding|original)\s+(?:instructions?|directions?|rules|guidelines|prompts?)\b/,
+  /\b(?:reveal|print|output|repeat|show|disclose|display|dump)\s+(?:all\s+|the\s+|your\s+|any\s+)*(?:system\s+prompt|(?:hidden|initial|original|secret|internal|system)\s+(?:instructions|prompt|rules))\b/,
   /\byou\s+are\s+now\b/,
-  /(?:^\s*|[.!?:;]\s+|\b(?:you|assistant|ai|model|bot|chatbot|please|now)\s+(?:(?:must|should|will|shall|can|need\s+to|are\s+to)\s+)?(?:now\s+)?)act\s+as\b|(?:^\s*|[.!?:;,]\s+)(?:then|next|also|first|finally|instead|and\s+then)\s*,?\s+act\s+as\b|(?:^\s*|[.!?:;]\s+)[-*•–—]\s*act\s+as\b|\b(?:assistant|ai|model|bot|chatbot|grok|claude|chatgpt|gpt)\s*[,:]\s*act\s+as\b/,
-  /\b(?:enable|enter|activate|switch\s+(?:to|into)|turn\s+on|go\s+into|boot\s+into|start)\s+(?:the\s+|in\s+)?(?:developer|dev)\s+mode\b|\byou\s+are\s+(?:now\s+)?(?:in|running\s+in|operating\s+in)\s+(?:developer|dev)\s+mode\b|\b(?:developer|dev)\s+mode\s*[:\-–—]\s*(?:please\s+)?(?:respond|answer|reply|ignore|disregard|bypass|output|reveal|print|generate|write|comply|obey|say|act|you\s+(?:must|will|should|can|are)|from\s+now\s+on|no\s+(?:restrictions|filters|limits|rules))\b/,
+  /(?:^\s*|[.!?:;]\s+|\b(?:you|assistant|ai|model|bot|chatbot|please|now)\s+(?:(?:must|should|will|shall|can|need\s+to|are\s+to)\s+)?(?:now\s+)?)act\s+as\b/,
+  /\b(?:enable|enter|activate|switch\s+(?:to|into)|turn\s+on|go\s+into|boot\s+into|start)\s+(?:the\s+|in\s+)?(?:developer|dev)\s+mode\b|\byou\s+are\s+(?:now\s+)?(?:in|running\s+in|operating\s+in)\s+(?:developer|dev)\s+mode\b/,
   /\bwhen\s+summari[sz]ing\b|\bwhen\s+(?:you\s+)?(?:reply|replying|respond|responding|answer|answering)\b|\bin\s+your\s+(?:response|reply|answer|summary)\b/,
   /\b(?:append|insert|include|prepend)\s+(?:the\s+)?(?:following\s+)?sentence\b|\b(?:append|prepend|add)\b[^.\n]{0,60}?\bto\s+(?:every|each|all|your|the)\s+(?:answers?|repl(?:y|ies)|responses?|summar(?:y|ies)|messages?|outputs?)\b/,
   /\b(?:do\s+not|don't)\s+(?:tell|mention)\b/,
@@ -398,12 +399,12 @@ const PAY_ACCT_BEFORE_NUM = new RegExp(String.raw`${PAY_ACCT}\W{0,6}(?:is\s+)?${
 const PAY_DETAIL = /\b(?:account|acct|a\/c|iban|routing|aba|swift|bic|sort\s*code|bank(?:ing)?\s+(?:details|info(?:rmation)?|coordinates)|(?:payment|remittance|wire|ach|payee|beneficiary)\s+(?:details|info(?:rmation)?|instructions|coordinates))\b/i;
 const PAY_NOT_DEST = /\b(?:date|dated|reference|ref|invoice\s+(?:number|no\.?|#|id)|ticket|case|order|po|purchase\s+order|tracking|serial|version|build)\b/i;
 const PAY_DATE_NUM = /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{2,4})$/;
-// 0.3.2 R4-F1: two groups of quote frames. A request quoted after a GENUINE refusal verb (reject, refuse, decline, ignore,
+// 0.3.2 R4-F1: two groups of quote frames. A request quoted after a GENUINE refusal verb (reject, refuse, decline,
 // do not act on / follow / honour / process / obey) is skipped by design (README Known gaps). Every other frame (report,
 // flag, block, delete, quarantine, forward, escalate, beware of, watch out for, ...) only caps the finding at review, like
 // the anti-fraud cue: an attacker can wrap a real redirect in it, so it never drops the finding to clean.
 const PAY_FRAME_TAIL = String.raw`\s+(?:any\s+|all\s+|the\s+|such\s+|these\s+|those\s+)?(?:messages?|e-?mails?|requests?|notes?|instructions?|calls?|anything|letters?|texts?|memos?|notices?)\b[^.\n]{0,40}?(?:saying|that\s+says?|stating|asking(?:\s+you)?(?:\s+to)?|requesting|claiming|like|such\s+as|reading|with)?\s*[:"“'‘]?\s*$`;
-const PAY_REFUSAL_SKIP = new RegExp(String.raw`\b(?:reject|refuse|decline|ignore|(?:do\s+not|don't|never)\s+(?:act\s+on|follow|honou?r|process|obey))` + PAY_FRAME_TAIL, "i");
+const PAY_REFUSAL_SKIP = new RegExp(String.raw`\b(?:reject|refuse|decline|(?:do\s+not|don't|never)\s+(?:act\s+on|follow|honou?r|process|obey))` + PAY_FRAME_TAIL, "i");
 const PAY_FRAME_CAP = new RegExp(String.raw`\b(report|flag|block|delete|quarantine|forward|escalate|beware\s+of|be\s+(?:wary|careful|suspicious)\s+of|watch\s+(?:out\s+)?for|look\s+out\s+for)` + PAY_FRAME_TAIL, "i");
 // Returns false (not a destination), or { frame } where frame is the capping frame verb (review at most) or null.
 function payDestOk(m, text) {
